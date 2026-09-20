@@ -117,6 +117,19 @@ export class CavaEngine {
       bar.peak = Math.max(0.02, Math.min(1.0, bar.peak));
     }
 
+    // 4. Linux CAVA Autosens (Automatic Gain / Dynamic Sensitivity Control)
+    if (!isResting) {
+      let currentMax = 0;
+      for (let i = 0; i < N; i++) {
+        if (this.bars[i].value > currentMax) currentMax = this.bars[i].value;
+      }
+      if (currentMax > 0.96) {
+        this.sens = Math.max(0.75, this.sens - 0.025);
+      } else if (currentMax < 0.65) {
+        this.sens = Math.min(1.85, this.sens + 0.008);
+      }
+    }
+
     return this.bars;
   }
 }

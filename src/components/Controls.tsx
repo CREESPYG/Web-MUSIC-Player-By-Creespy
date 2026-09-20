@@ -62,19 +62,19 @@ export function Controls({
   const canShuffle = !inRoom || !roomPerms || roomPerms.shuffle;
 
   return (
-    <div className="glass shrink-0 rounded-[var(--radius)] p-3 md:p-5 w-full max-w-[580px] mx-auto">
+    <div className="shrink-0 rounded-[28px] border border-white/8 bg-[var(--bg1,#161e28)] p-4 md:p-5 w-full max-w-[580px] mx-auto select-none shadow-none">
       {/* Room member queue-only hint */}
       {inRoom && locked && (
-        <div className="mb-2.5 flex items-center justify-center gap-1.5 rounded-lg bg-white/4 px-3 py-1.5">
+        <div className="mb-2.5 flex items-center justify-center gap-1.5 rounded-full bg-white/5 border border-white/8 px-3 py-1.5">
           <span className="flex items-center gap-1.5 text-[10px] text-[var(--dim)] font-tmono uppercase tracking-[0.14em]">
             <LockIcon size={12} /> Host controls playback · Add songs to queue
           </span>
         </div>
       )}
-      {/* Seek row with clean monospace timestamps (hidden when hideTime) */}
+      {/* Material 3 Expressive Seek Bar with Monospace Timestamps */}
       {!hideTime && (
         <div className="flex items-center gap-3">
-          <span className="w-12 text-right font-tmono text-[11px] tabular-nums text-[var(--dim)] font-medium">
+          <span className="w-12 text-right font-tmono text-[11px] tabular-nums text-[var(--dim)] font-semibold">
             {formattedTime}
           </span>
           <div
@@ -96,37 +96,41 @@ export function Controls({
             }}
             onPointerCancel={() => setScrub(null)}
             className={cn(
-              "group relative h-6 flex-1 touch-none select-none",
+              "group relative h-7 flex-1 touch-none select-none flex items-center cursor-pointer",
               duration > 0 ? "cursor-pointer" : "cursor-not-allowed opacity-50"
             )}
           >
-            <div className="absolute inset-x-0 top-1/2 h-[5px] -translate-y-1/2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-white/20" style={{ width: `${buffered * 100}%` }} />
+            {/* Background pill track */}
+            <div className="relative w-full h-2 rounded-full overflow-hidden bg-white/10">
+              {/* Buffer track */}
+              <div className="h-full rounded-full bg-white/15" style={{ width: `${buffered * 100}%` }} />
+              {/* Active played track */}
+              <div
+                className="absolute inset-y-0 left-0 rounded-full transition-all duration-75"
+                style={{
+                  width: `${frac * 100}%`,
+                  background: "var(--acc0)",
+                }}
+              />
             </div>
-            <div
-              className="absolute top-1/2 h-[5px] -translate-y-1/2 rounded-full"
-              style={{
-                width: `${frac * 100}%`,
-                background: "var(--acc0)",
-              }}
-            />
+            {/* Expressive M3 thumb knob */}
             <div
               className={cn(
-                "absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--acc0)] shadow-sm transition-transform",
-                scrub !== null ? "scale-125" : "scale-100 group-hover:scale-110"
+                "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--acc0)] shadow-md transition-transform duration-150",
+                scrub !== null ? "scale-125 ring-4 ring-[var(--acc0)]/25" : "scale-100 group-hover:scale-115"
               )}
               style={{ left: `${frac * 100}%` }}
             />
             {scrub !== null && (
               <div
-                className="glass-soft pointer-events-none absolute -top-8 -translate-x-1/2 rounded-md px-2 py-1 font-tmono text-[10px] tabular-nums text-white"
+                className="pointer-events-none absolute -top-8 -translate-x-1/2 rounded-full bg-[#1e293b] border border-white/10 px-2.5 py-0.5 font-tmono text-[10px] tabular-nums text-white shadow-lg"
                 style={{ left: `${frac * 100}%` }}
               >
                 {fmtTime(scrub)}
               </div>
             )}
           </div>
-          <span className="w-12 font-tmono text-[11px] tabular-nums text-[var(--dim)] font-medium">
+          <span className="w-12 font-tmono text-[11px] tabular-nums text-[var(--dim)] font-semibold">
             {formattedDuration}
           </span>
         </div>

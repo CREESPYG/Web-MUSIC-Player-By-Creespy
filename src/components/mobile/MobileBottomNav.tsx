@@ -75,7 +75,7 @@ export function MobileBottomNav({
 
   return (
     <nav
-      className="sticky bottom-0 z-40 flex h-16 shrink-0 items-center justify-around border-t border-white/10 bg-black/75 px-1 backdrop-blur-2xl"
+      className="sticky bottom-0 z-40 flex h-16 shrink-0 items-center justify-around border-t border-white/8 bg-[var(--bg1,#161e28)] px-1 select-none"
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 6px)" }}
     >
       <TabBtn id="player" icon={<HeadphonesIcon size={18} />} label="Music" />

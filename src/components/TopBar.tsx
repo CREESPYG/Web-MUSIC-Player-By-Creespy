@@ -92,7 +92,7 @@ export function TopBar({
       <div className="flex items-center gap-2 md:gap-3">
         {/* Real online sessions */}
         <div
-          className="glass hidden items-center gap-2 rounded-full px-3 py-2 sm:flex"
+          className="hidden items-center gap-2 rounded-full border border-white/8 bg-[var(--bg1,#161e28)] px-3 py-2 sm:flex shadow-none"
           title={mode === "global" ? "Live across all visitors via Supabase presence" : "Counting this browser's open tabs"}
         >
           <span className="live-dot h-1.5 w-1.5 rounded-full bg-[var(--acc0)]" />
@@ -103,7 +103,7 @@ export function TopBar({
         </div>
 
         {/* View mode switcher */}
-        <div className="glass flex items-center gap-0.5 rounded-full p-0.5" role="radiogroup" aria-label="View mode">
+        <div className="flex items-center gap-0.5 rounded-full border border-white/8 bg-[var(--bg1,#161e28)] p-0.5 shadow-none" role="radiogroup" aria-label="View mode">
           {VIEWS.map(({ v, label, Icon }) => (
             <md-icon-button
               key={v}
@@ -133,7 +133,7 @@ export function TopBar({
 
         {/* Unified Accent Themes & Custom Color Picker */}
         <div
-          className="glass hidden items-center gap-2 rounded-full p-1.5 md:flex"
+          className="hidden items-center gap-2 rounded-full border border-white/8 bg-[var(--bg1,#161e28)] p-1.5 md:flex shadow-none"
           role="radiogroup"
           aria-label="Accent Themes and Custom Color"
         >

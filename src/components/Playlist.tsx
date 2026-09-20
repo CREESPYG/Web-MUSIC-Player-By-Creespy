@@ -53,7 +53,7 @@ export function Playlist({
   };
 
   return (
-    <div className="glass flex min-h-0 flex-1 flex-col p-3.5 md:p-5 rounded-[var(--radius)]">
+    <div className="flex min-h-0 flex-1 flex-col p-3.5 md:p-5 rounded-[28px] border border-white/8 bg-[var(--bg1,#161e28)] select-none shadow-none">
       <div className="mb-3 flex shrink-0 items-center justify-between px-1">
         <h3 className="font-display text-sm font-bold uppercase tracking-[0.2em] text-[var(--ink)]">Queue</h3>
         <div className="flex items-center gap-2">
@@ -140,8 +140,8 @@ export function Playlist({
                 whileTap={{ scale: 0.985 }}
                 onClick={() => player.select(i)}
                 className={cn(
-                  "relative flex w-full items-center gap-3 overflow-hidden rounded-[var(--radius-s)] p-2.5 text-left transition-colors",
-                  active ? "border border-[var(--acc0)]/35 bg-white/8" : "border border-transparent hover:bg-white/5"
+                  "relative flex w-full items-center gap-3 overflow-hidden rounded-2xl p-2.5 text-left transition-all",
+                  active ? "border border-[var(--acc0)]/30 bg-[var(--acc0)]/12" : "border border-transparent hover:bg-white/6"
                 )}
               >
                 <md-ripple></md-ripple>

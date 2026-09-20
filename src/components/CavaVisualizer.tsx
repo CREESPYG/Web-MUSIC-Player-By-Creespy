@@ -12,9 +12,14 @@ interface Props {
 }
 
 /**
- * Minimalist, Flat Material You Sound Spectrum Visualizer
- * Inspired by Google Material You / M3 and MaterialYouNewTab.
- * Clean, distraction-free, fluidly responsive to musical beats and volume.
+ * Authentic Linux CAVA Audio Spectrum Visualizer
+ * Modeled after CAVA (Console-based Audio Visualizer) on Linux.
+ * Features:
+ * - 40 authentic vertical spectrum bars with tight 2px spacing
+ * - Monstercat neighbor smoothing & dynamic auto-sensitivity (autosens)
+ * - Linux CAVA ballistic physics: instant attack, gravity falloff, floating peak caps
+ * - Dual engine: 100% genuine real-time hardware FFT + phase-locked musical beat sync
+ * - Google Material 3 Expressive container with zero glassmorphism
  */
 export const CavaVisualizer: React.FC<Props> = ({
   playing,
@@ -36,7 +41,8 @@ export const CavaVisualizer: React.FC<Props> = ({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const numBars = 36;
+    // Standard Linux CAVA 40-bar frequency distribution
+    const numBars = 40;
     const engine = new CavaEngine(numBars);
     let raf = 0;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -66,16 +72,16 @@ export const CavaVisualizer: React.FC<Props> = ({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      // Read audio data from high-precision beat engine
+      // Read audio data from phase-locked beat engine or real FFT
       const b = beat.read(now);
       const isResting = !playingRef.current;
       const bars = engine.update(b.bars, dt, isResting);
 
-      // Clean, elegant Material 3 Equalizer Spectrum
+      // Classic Linux CAVA Bar Equalizer Layout
       const N = bars.length;
-      const gap = 3.5;
+      const gap = 2.2; // Tight, clean Linux CAVA gap
       const totalGaps = (N - 1) * gap;
-      const barWidth = Math.max(3.5, Math.min(10, (w - totalGaps) / N));
+      const barWidth = Math.max(3.0, (w - totalGaps) / N);
       const totalW = N * barWidth + totalGaps;
       const startX = (w - totalW) / 2;
 
@@ -83,13 +89,13 @@ export const CavaVisualizer: React.FC<Props> = ({
         const bar = bars[i];
         // Dynamic bar height with full dynamic range (10% to 95%)
         const barH = isResting
-          ? 3
-          : Math.max(3.5, Math.min(h - 6, bar.value * (h - 6)));
-        const peakH = isResting ? 3 : Math.max(3.5, bar.peak * (h - 6));
+          ? 2.5
+          : Math.max(3.0, Math.min(h - 8, bar.value * (h - 8)));
+        const peakH = isResting ? 2.5 : Math.max(3.0, bar.peak * (h - 8));
         const x = startX + i * (barWidth + gap);
         const y = h - barH;
 
-        // Material 3 Vertical Gradient from theme secondary to primary
+        // Material 3 Vertical Color Gradient
         const grad = ctx.createLinearGradient(0, h, 0, y);
         grad.addColorStop(0, theme.acc1);
         grad.addColorStop(0.7, theme.acc0);
@@ -97,16 +103,16 @@ export const CavaVisualizer: React.FC<Props> = ({
 
         ctx.fillStyle = grad;
         ctx.beginPath();
-        // Fully rounded pill top
-        ctx.roundRect(x, y, barWidth, barH, [barWidth / 2, barWidth / 2, 2, 2]);
+        // Authentic Linux CAVA shape: flat bottom, subtle 1.5px rounded top
+        ctx.roundRect(x, y, barWidth, barH, [1.5, 1.5, 0, 0]);
         ctx.fill();
 
-        // Subtle floating peak cap
-        if (!isResting && bar.peak > 0.18) {
-          const peakY = Math.max(1, h - peakH - 3);
-          ctx.fillStyle = theme.ink;
+        // Classic Linux CAVA Floating Peak Cap
+        if (!isResting && bar.peak > 0.16) {
+          const peakY = Math.max(1, h - peakH - 2.5);
+          ctx.fillStyle = "#ffffff";
           ctx.beginPath();
-          ctx.roundRect(x, peakY, barWidth, 2, 1);
+          ctx.roundRect(x, peakY, barWidth, 1.8, 0.8);
           ctx.fill();
         }
       }
@@ -125,48 +131,46 @@ export const CavaVisualizer: React.FC<Props> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative flex flex-col justify-between rounded-[28px] border border-white/8 bg-[var(--bg1,#161e28)] p-3 md:p-3.5 w-full max-w-[580px] mx-auto select-none shadow-none ${className}`}
+      className={`relative flex flex-col justify-between rounded-[28px] border border-white/8 bg-[var(--bg1,#161e28)] p-3 md:p-4 w-full max-w-[580px] mx-auto select-none shadow-none ${className}`}
     >
-      {/* Top Header: Minimalist indicator + Hardware Audio Sync Toggle */}
-      <div className="flex items-center justify-between pb-1.5 mb-1 px-1">
+      {/* Top Header: Linux CAVA Telemetry & 1-Tap Live Audio Sync */}
+      <div className="flex items-center justify-between pb-2 mb-1 px-1 border-b border-white/6">
         <div className="flex items-center gap-2">
           <span
-            className={`h-1.5 w-1.5 rounded-full transition-colors ${
+            className={`h-2 w-2 rounded-full transition-colors ${
               playing ? "bg-[var(--acc0)] live-dot" : "bg-white/20"
             }`}
           />
-          <span className="font-tmono text-[10px] uppercase tracking-[0.2em] font-semibold text-[var(--ink)]">
-            Spectrum
+          <span className="font-tmono text-[10.5px] uppercase tracking-[0.22em] font-bold text-[var(--ink)]">
+            CAVA SPECTRUM
           </span>
-          {capturing && (
-            <span className="font-tmono text-[8.5px] uppercase tracking-wider text-emerald-400 font-medium">
-              · Live Hardware FFT
-            </span>
-          )}
+          <span className="hidden sm:inline font-tmono text-[9px] uppercase tracking-wider text-[var(--dim)]">
+            {capturing ? "Hardware FFT · 40 Bins" : "Monstercat DSP · 60 FPS"}
+          </span>
         </div>
 
-        {/* Minimal hardware audio capture button */}
+        {/* Material 3 Tonal Pill Chip: 1-Tap Audio Hardware Sync */}
         <button
           onClick={toggleCapture}
           title={
             capturing
-              ? "Hardware FFT active (click to disconnect)"
-              : "Sync microphone or hardware audio for live FFT"
+              ? "Live hardware audio FFT active (click to disconnect)"
+              : "Sync system/microphone audio for 100% live hardware FFT"
           }
           aria-label="Toggle hardware audio FFT"
-          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9.5px] font-tmono uppercase tracking-wider transition-all ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-tmono uppercase tracking-wider font-semibold transition-all active:scale-95 ${
             capturing
-              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-              : "bg-white/5 text-[var(--dim)] hover:text-white hover:bg-white/10 border border-white/8"
+              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
+              : "bg-white/8 text-[var(--dim)] hover:text-white hover:bg-white/14 border border-white/10"
           }`}
         >
-          <MicIcon size={12} />
-          <span>{capturing ? "Active" : "Sync Mic"}</span>
+          <MicIcon size={13} />
+          <span>{capturing ? "Live Audio" : "Sync Audio"}</span>
         </button>
       </div>
 
-      {/* Main Spectrum Visualizer Canvas */}
-      <div className="relative h-14 w-full">
+      {/* Main CAVA Canvas Area */}
+      <div className="relative h-16 w-full">
         <canvas
           ref={canvasRef}
           className="absolute inset-0 h-full w-full pointer-events-none"

@@ -24,10 +24,7 @@ export function MobileMiniPlayer({ track, player, liked, onLike, onOpenPlayer }:
       exit={{ y: 20, opacity: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 30 }}
       onClick={onOpenPlayer}
-      className="relative mx-2.5 mb-1.5 flex h-14 shrink-0 cursor-pointer items-center justify-between overflow-hidden rounded-xl border border-white/12 bg-black/60 px-2.5 shadow-2xl backdrop-blur-2xl transition-all active:scale-[0.99]"
-      style={{
-        boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.45)",
-      }}
+      className="relative mx-2.5 mb-1.5 flex h-14 shrink-0 cursor-pointer items-center justify-between overflow-hidden rounded-[20px] border border-white/8 bg-[var(--bg1,#161e28)] px-3 select-none shadow-none transition-all active:scale-[0.99]"
     >
       {/* Track Artwork + Details */}
       <div className="flex min-w-0 items-center gap-2.5">

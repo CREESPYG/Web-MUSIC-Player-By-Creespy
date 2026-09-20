@@ -31,7 +31,7 @@ export function ClockCard({
   const time = clock24 ? `${String(c.h24).padStart(2, "0")}:${c.mm}` : `${c.hh}:${c.mm}`;
 
   return (
-    <div className="glass relative overflow-hidden p-4 md:p-5">
+    <div className="relative overflow-hidden p-4 md:p-5 rounded-[28px] border border-white/8 bg-[var(--bg1,#161e28)] select-none shadow-none">
       <div className="relative flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="font-tmono text-[9.5px] uppercase tracking-[0.28em] text-[var(--dim)]">{c.greeting}</p>

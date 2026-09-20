@@ -43,12 +43,25 @@ class BeatEngine {
   }
 
   sync(trackTimeSec: number, isPlaying: boolean, bpm: number, seed: number, volume = 1) {
-    this.trackTime = Math.max(0, trackTimeSec || 0);
-    this.lastSyncMs = performance.now();
+    const wasPlaying = this.playing;
     this.playing = isPlaying;
     this.bpm = bpm > 40 && bpm < 240 ? bpm : 110;
     this.seed = seed || 1;
     this.volume = Math.max(0, Math.min(1, volume));
+
+    const now = performance.now();
+    const currentEstimate = this.trackTime + Math.max(0, (now - this.lastSyncMs) / 1000);
+    const diff = Math.abs(trackTimeSec - currentEstimate);
+
+    // If seeking, track initial start, or large desync (>0.35s), snap immediately
+    if (!wasPlaying && isPlaying || diff > 0.35 || trackTimeSec === 0) {
+      this.trackTime = Math.max(0, trackTimeSec || 0);
+      this.lastSyncMs = now;
+    } else {
+      // Phase-Locked Loop: Gently drift towards player time by 15% without abrupt jumps
+      this.trackTime = currentEstimate + (trackTimeSec - currentEstimate) * 0.15;
+      this.lastSyncMs = now;
+    }
   }
 
   setPlaying(p: boolean) {

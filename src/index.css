@@ -132,22 +132,37 @@ input,
   color: #050a12;
 }
 
-/* ---------- Material 3 Flat Clean Surfaces ---------- */
+/* ---------- Material 3 Flat Clean Surfaces (Strict Material You / No Glassmorphism) ---------- */
 .glass {
-  background: var(--glass-bg, color-mix(in srgb, var(--bg1, #161e28) 88%, transparent));
+  background: var(--glass-bg, var(--bg1, #161e28));
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius, 24px);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius, 28px);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
 }
 
 .glass-soft {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--bg2, #1f2836);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-s, 16px);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+/* Global Purge of Glassmorphism / Frosted Blur in favor of Pure Flat Material You */
+*, *::before, *::after {
+  --tw-backdrop-blur: none !important;
+}
+[class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.glass-panel {
+  background: var(--bg1, #161e28) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* subtle top-edge sheen for depth without heavy borders */
@@ -161,12 +176,12 @@ input,
 
 /* ---------- Material Design 3 (Material You) Tokens ---------- */
 .m3-surface {
-  background: color-mix(in srgb, var(--bg1) 85%, transparent);
+  background: var(--bg1, #161e28);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 28px;
-  box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .m3-chip {

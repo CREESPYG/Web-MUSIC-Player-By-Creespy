@@ -66,9 +66,9 @@ class BeatEngine {
     const dt = this.lastReadTime ? Math.min(0.08, (nowMs - this.lastReadTime) / 1000) : 0.016;
     this.lastReadTime = nowMs;
 
-    // Smooth envelope: reaches 1.0 when playing, drops to 0.05 when paused
-    const targetEnv = this.playing ? this.volume : 0.05;
-    const k = 1 - Math.exp(-dt * (this.playing ? 6.0 : 2.5));
+    // Smooth envelope: reaches 1.0 when playing, drops to 0.02 when paused
+    const targetEnv = this.playing ? Math.max(0.2, this.volume) : 0.0;
+    const k = 1 - Math.exp(-dt * (this.playing ? 8.0 : 3.0));
     this.env += (targetEnv - this.env) * k;
     const e = this.env;
 
@@ -84,24 +84,24 @@ class BeatEngine {
       const trebleCount = binCount - bassCount - midCount;
 
       for (let i = 0; i < binCount; i++) {
-        const val = this.fftData[i] / 255;
+        const val = Math.min(1.0, (this.fftData[i] / 255) * 1.65);
         if (i < bassCount) sumBass += val;
         else if (i < bassCount + midCount) sumMid += val;
         else sumTreble += val;
       }
 
-      this.bass = bassCount > 0 ? sumBass / bassCount : 0;
-      this.mid = midCount > 0 ? sumMid / midCount : 0;
-      this.treble = trebleCount > 0 ? sumTreble / trebleCount : 0;
-      this.level = this.bass * 0.5 + this.mid * 0.35 + this.treble * 0.15;
-      this.pulse = Math.max(this.bass * 1.4, this.level);
+      this.bass = bassCount > 0 ? (sumBass / bassCount) * e : 0;
+      this.mid = midCount > 0 ? (sumMid / midCount) * e : 0;
+      this.treble = trebleCount > 0 ? (sumTreble / trebleCount) * e : 0;
+      this.level = this.bass * 0.48 + this.mid * 0.34 + this.treble * 0.18;
+      this.pulse = Math.max(this.bass * 1.35, this.level);
 
-      // Resample FFT bins to our 64 visualizer bars
+      // Resample FFT bins to our 64 visualizer bars with frequency boost
       for (let i = 0; i < numBars; i++) {
-        const binIdx = Math.floor((i / numBars) * (binCount * 0.65));
-        const val = (this.fftData[binIdx] / 255) * e;
+        const binIdx = Math.floor((i / numBars) * (binCount * 0.72));
+        const val = Math.min(1.0, ((this.fftData[binIdx] || 0) / 255) * 1.7 * e);
         const prev = this.bars[i];
-        this.bars[i] = prev + (val - prev) * (val > prev ? 0.75 : 0.28);
+        this.bars[i] = prev + (val - prev) * (val > prev ? 0.85 : 0.25);
       }
 
       return this;
@@ -125,56 +125,65 @@ class BeatEngine {
     this.measureBeat = Math.abs(beatIndex % 4);
 
     // 1. Kick Attack & Decay (punchy, deep sub-bass thump)
-    const kickCurve = Math.max(0, 1 - beatPhase * 3.2);
-    const kick = Math.pow(kickCurve, 2) * e;
-
-    // 2. Downbeat Kick (Beat 1 of measure)
     const isDownbeat = this.measureBeat === 0;
-    const downbeatVal = isDownbeat ? kick * 1.6 : kick * 0.9;
-    this.downbeat = downbeatVal;
+    const isBeatThree = this.measureBeat === 2;
+    const kickAttack = Math.max(0, 1 - beatPhase * 3.6);
+    const kickDecay = Math.exp(-beatPhase * 4.5);
+    const kickStrength = isDownbeat ? 1.0 : isBeatThree ? 0.88 : 0.52;
+    const kickHit = (kickAttack * 0.75 + kickDecay * 0.25) * kickStrength * e;
+    this.downbeat = isDownbeat ? kickHit : kickHit * 0.6;
 
-    // 3. Snare / Clap (Beats 2 & 4)
+    // 2. Snare / Clap (Beats 2 & 4)
     const isBackbeat = this.measureBeat === 1 || this.measureBeat === 3;
-    const snare = isBackbeat ? Math.pow(Math.max(0, 1 - beatPhase * 3.6), 2) * e : 0;
+    const snareHit = isBackbeat ? Math.max(0, 1 - beatPhase * 4.2) * 0.9 * e : 0;
 
-    // 4. 16th-note Hi-hats
-    const sub16 = (fractionalBeat * 4) % 1;
-    const hihat = Math.pow(Math.max(0, 1 - sub16 * 4.0), 2) * 0.45 * e;
+    // 3. Rolling 808 sub-bass groove
+    const bassGroove = (0.42 + 0.38 * Math.sin(currentSec * (beatsPerSec * Math.PI) + this.seed)) * e;
 
-    this.pulse = Math.max(kick * 1.2, snare * 0.85);
+    // 4. 16th and 8th-note Hi-hats
+    const hatPhase = (fractionalBeat * 4) % 1;
+    const hatHit = Math.max(0, 1 - hatPhase * 3.5) * 0.65 * e;
 
-    // Frequency bands
-    this.bass = Math.min(1, Math.max(0.05, 0.15 + downbeatVal * 0.95 + Math.sin(currentSec * 2.4) * 0.08 * e));
-    this.mid = Math.min(1, Math.max(0.05, 0.12 + snare * 0.85 + kick * 0.3 + Math.cos(currentSec * 3.8) * 0.06 * e));
-    this.treble = Math.min(1, Math.max(0.05, 0.1 + hihat * 0.9 + Math.sin(currentSec * 7.2) * 0.05 * e));
-    this.level = Math.min(1, this.bass * 0.5 + this.mid * 0.32 + this.treble * 0.18);
+    // 5. Melodic vocal / synth wave
+    const melodyWave = (0.35 + 0.4 * Math.sin(currentSec * 2.2 + Math.cos(currentSec * 0.75))) * e;
+
+    this.pulse = Math.max(kickHit * 1.3, snareHit * 0.95, bassGroove * 0.85);
+
+    // Frequency bands with real dynamic range
+    this.bass = Math.min(1.0, Math.max(0.02, (bassGroove * 0.45 + kickHit * 0.85 + Math.sin(currentSec * 3.2) * 0.12) * e));
+    this.mid = Math.min(1.0, Math.max(0.02, (melodyWave * 0.6 + snareHit * 0.75 + kickHit * 0.25) * e));
+    this.treble = Math.min(1.0, Math.max(0.02, (hatHit * 0.75 + snareHit * 0.35 + Math.sin(currentSec * 7.5) * 0.15) * e));
+    this.level = Math.min(1.0, this.bass * 0.45 + this.mid * 0.35 + this.treble * 0.2);
 
     // 64-band vivid frequency spectrum
     const N = this.bars.length;
     for (let i = 0; i < N; i++) {
       let rawBar = 0;
 
-      if (i < 16) {
+      if (!this.playing || e < 0.03) {
+        rawBar = 0.02 + Math.sin(nowMs * 0.002 + i * 0.15) * 0.01;
+      } else if (i < 16) {
         // Heavy Sub-Bass & Bass (0..15)
         const subFrac = 1 - i / 16;
-        const bassJitter = Math.sin(currentSec * 4.5 + i * 0.8) * 0.12 * e;
-        rawBar = this.bass * (0.7 + subFrac * 0.55) + bassJitter;
+        const wave = Math.sin(currentSec * 5.0 + i * 0.55) * 0.16;
+        rawBar = this.bass * (0.8 + subFrac * 0.55) + wave * e;
       } else if (i < 42) {
         // Warm Mid-Range & Melodies (16..41)
         const midFrac = (i - 16) / 26;
-        const midJitter = Math.cos(currentSec * 5.2 + i * 0.4) * 0.1 * e;
-        rawBar = this.mid * (0.6 + Math.sin(midFrac * Math.PI) * 0.55) + midJitter;
+        const bell = Math.sin(midFrac * Math.PI);
+        const wave = Math.cos(currentSec * 4.2 + i * 0.42) * 0.15;
+        rawBar = this.mid * (0.7 + bell * 0.55) + wave * e;
       } else {
         // Sparkling Highs & Cymbals (42..63)
         const highFrac = (i - 42) / 22;
-        const highJitter = Math.sin(currentSec * 9.5 + i * 1.1) * 0.08 * e;
-        rawBar = this.treble * (0.55 + highFrac * 0.6) + hihat * 0.45 + highJitter;
+        const wave = Math.sin(currentSec * 9.8 + i * 0.95) * 0.14;
+        rawBar = this.treble * (0.65 + highFrac * 0.5) + hatHit * 0.45 + wave * e;
       }
 
       // Smooth organic physics (fast attack, natural acoustic decay)
       const prev = this.bars[i];
-      const target = Math.min(1, Math.max(0.02, rawBar));
-      this.bars[i] = prev + (target - prev) * (target > prev ? 0.78 : 0.22);
+      const target = Math.min(1.0, Math.max(0.02, rawBar));
+      this.bars[i] = prev + (target - prev) * (target > prev ? 0.85 : 0.24);
     }
 
     return this;

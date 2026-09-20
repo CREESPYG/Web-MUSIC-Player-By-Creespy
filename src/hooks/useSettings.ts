@@ -83,15 +83,15 @@ export function useSettings(theme: Theme, applyTheme: (id: string) => void) {
 
   const glassVars = useMemo(
     () => ({
-      "--glass-bg": `linear-gradient(155deg, rgba(255,255,255,${(0.085 * settings.tileOpacity).toFixed(3)}), rgba(255,255,255,${(0.028 * settings.tileOpacity).toFixed(3)}))`,
-      "--glass-border": `rgba(255,255,255,${(0.06 + 0.09 * settings.tileOpacity).toFixed(3)})`,
+      "--glass-bg": "var(--bg1, #161e28)",
+      "--glass-border": "rgba(255, 255, 255, 0.08)",
       "--bw": `${settings.borderWidth}px`,
       "--radius": `${settings.tileSize}px`,
       "--radius-s": `${Math.max(8, Math.round(settings.tileSize * 0.66))}px`,
-      "--blur": `${Math.round(10 + 6 * settings.tileOpacity)}px`,
-      "--blur-s": `${Math.round(6 + 4 * settings.tileOpacity)}px`,
+      "--blur": "0px",
+      "--blur-s": "0px",
     }) as React.CSSProperties,
-    [settings.tileOpacity, settings.borderWidth, settings.tileSize]
+    [settings.tileSize, settings.borderWidth]
   );
 
   const reset = useCallback(() => setSettings({ ...DEFAULTS }), []);

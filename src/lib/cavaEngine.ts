@@ -21,11 +21,11 @@ export class CavaEngine {
   readonly bars: CavaBar[];
 
   // CAVA Physics Parameters
-  gravity = 0.0035;       // Falloff acceleration per frame
-  fallSpeed = 0.015;      // Base falloff rate
-  monstercat = 1.6;       // Neighbor smoothing decay (higher = sharper, lower = smoother)
-  peakHoldFrames = 14;    // Frames to hold peak cap at apex
-  sens = 1.0;             // Sensitivity multiplier
+  gravity = 0.0038;       // Falloff acceleration per frame
+  fallSpeed = 0.016;      // Base falloff rate
+  monstercat = 1.45;      // Neighbor smoothing decay (higher = sharper, lower = smoother)
+  peakHoldFrames = 12;    // Frames to hold peak cap at apex
+  sens = 1.25;            // Sensitivity multiplier for high-energy bars
 
   private rawValues: Float32Array;
   private smoothedValues: Float32Array;

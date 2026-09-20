@@ -9,8 +9,18 @@ export const RATES = [1, 1.25, 1.5, 0.75];
 
 const TOPUP_AT_MS = 45_000; // start fetching similar when the track is this old
 
-/** Create a silent audio element to keep iOS audio alive in background */
+/** Check if current browser is iOS Safari where background audio needs keepalive */
+function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
+/** Create a silent audio element to keep iOS audio alive in background (iOS only) */
 function createSilentKeepAlive(): HTMLAudioElement | null {
+  if (!isIOS()) return null; // Disabled on Windows/macOS/Android/Brave Desktop to avoid Audio Service decoder leaks
   try {
     const a = new Audio();
     a.loop = true;
@@ -23,20 +33,51 @@ function createSilentKeepAlive(): HTMLAudioElement | null {
   }
 }
 
+/* ---------- Wake Lock API ---------- */
+let wakeLock: WakeLockSentinel | null = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch { /* noop — unsupported or denied */ }
+}
+function releaseWakeLock() {
+  try { wakeLock?.release(); } catch { /* noop */ }
+  wakeLock = null;
+}
+
 /** Update Media Session metadata + action handlers for lock-screen controls */
-function updateMediaSession(track: Track | undefined, playing: boolean) {
+function updateMediaSession(track: Track | undefined, playing: boolean, time?: number, duration?: number) {
   if (!("mediaSession" in navigator)) return;
   if (track) {
+    const rawThumb = track.thumb || track.artwork || "";
+    const highRes = rawThumb.replace("hqdefault.jpg", "maxresdefault.jpg").replace("mqdefault.jpg", "maxresdefault.jpg");
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title || "Unknown",
       artist: track.artist || "CREESPY",
       album: track.album || "CREEP CREEP",
       artwork: [
-        { src: track.thumb || track.artwork || "", sizes: "480x360", type: "image/jpeg" },
+        { src: highRes || rawThumb, sizes: "512x512", type: "image/jpeg" },
+        { src: rawThumb, sizes: "480x360", type: "image/jpeg" },
+        { src: "/icon.svg", sizes: "192x192", type: "image/svg+xml" },
       ].filter((a) => a.src),
     });
   }
   navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+
+  if (time != null && duration != null && duration > 0 && "setPositionState" in navigator.mediaSession) {
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: Math.max(1, duration),
+        playbackRate: 1,
+        position: Math.min(duration, Math.max(0, time)),
+      });
+    } catch {
+      /* noop */
+    }
+  }
 }
 
 /**
@@ -75,6 +116,7 @@ export function usePlayer(
   tracksRef.current = tracks;
   const startedRef = useRef(false);
   const errLock = useRef(0);
+  const errCount = useRef(0);
   const skipTimer = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string; autoplay: boolean } | null>(null);
   const recentRef = useRef<string[]>([]);
@@ -188,12 +230,14 @@ export function usePlayer(
         playingRef.current = true;
         setPlaying(true);
         startKeepAlive();
+        requestWakeLock();
       });
       navigator.mediaSession.setActionHandler("pause", () => {
         pRef.current?.pauseVideo?.();
         playingRef.current = false;
         setPlaying(false);
         stopKeepAlive();
+        releaseWakeLock();
       });
       navigator.mediaSession.setActionHandler("previoustrack", () => {
         cue(idxRef.current - 1, true);
@@ -209,15 +253,32 @@ export function usePlayer(
       });
     }
 
+    let container: HTMLElement | null = null;
     loadYouTubeAPI().then((YT: any) => {
       if (dead) return;
+      container = document.getElementById("youtube-player-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.id = "youtube-player-container";
+        let isLiveBg = false;
+        try {
+          const raw = localStorage.getItem("ripple.settings.v1");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.bgStyle === "live") isLiveBg = true;
+          }
+        } catch {}
+        container.className = isLiveBg ? "yt-live-bg" : "yt-hidden";
+        container.setAttribute("aria-hidden", "true");
+        document.body.appendChild(container);
+      }
       host = document.createElement("div");
-      host.style.cssText = "position:fixed;left:-9999px;top:0;width:200px;height:112px;pointer-events:none;opacity:0.01;";
-      document.body.appendChild(host);
+      host.id = "youtube-player-mount";
+      container.appendChild(host);
       const first = tracksRef.current[0]?.videoId;
       pRef.current = new YT.Player(host, {
-        width: "200",
-        height: "112",
+        width: "100%",
+        height: "100%",
         videoId: first,
         playerVars: { controls: 0, disablekb: 1, playsinline: 1, rel: 0, iv_load_policy: 3, fs: 0 },
         events: {
@@ -238,6 +299,7 @@ export function usePlayer(
                   playingRef.current = true;
                   setPlaying(true);
                   startKeepAlive();
+                  requestWakeLock();
                   pRef.current.loadVideoById(pend.id);
                 } else pRef.current.cueVideoById(pend.id);
               } catch {
@@ -247,22 +309,26 @@ export function usePlayer(
           },
           onStateChange: (e: any) => {
             if (e.data === YTState.PLAYING) {
+              errCount.current = 0;
               playingRef.current = true;
               setPlaying(true);
               setBuffering(false);
               startKeepAlive();
+              requestWakeLock();
               updateMediaSession(tracksRef.current[idxRef.current], true);
             } else if (e.data === YTState.PAUSED) {
               playingRef.current = false;
               setPlaying(false);
               setBuffering(false);
               updateMediaSession(tracksRef.current[idxRef.current], false);
+              releaseWakeLock();
             } else if (e.data === YTState.BUFFERING) {
               setBuffering(true);
             } else if (e.data === YTState.ENDED) {
               playingRef.current = false;
               setPlaying(false);
               updateMediaSession(tracksRef.current[idxRef.current], false);
+              releaseWakeLock();
               if (repeatRef.current === "one") {
                 try {
                   pRef.current.seekTo(0, true);
@@ -270,6 +336,7 @@ export function usePlayer(
                   playingRef.current = true;
                   setPlaying(true);
                   startKeepAlive();
+                  requestWakeLock();
                 } catch {
                   /* noop */
                 }
@@ -278,19 +345,47 @@ export function usePlayer(
           },
           onError: () => {
             const now = Date.now();
-            if (now - errLock.current < 4000) return;
+            if (now - errLock.current < 3000) return;
             errLock.current = now;
             playingRef.current = false;
             setPlaying(false);
+            errCount.current += 1;
+            if (errCount.current >= 3) {
+              onErrorRef.current?.("Multiple tracks failed to load — paused");
+              return;
+            }
             onErrorRef.current?.("That link can't be streamed here — jumping ahead");
             skipTimer.current = window.setTimeout(() => nextRef.current(true), 1500);
           },
         },
       });
     });
+
+    /* ---------- visibility-change auto-resume ----------
+     * On Android Chrome, YouTube iframes are paused when the tab is backgrounded
+     * or the screen locks. When the user returns, detect the unexpected pause and
+     * resume playback automatically so the experience feels seamless. */
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      const p = pRef.current;
+      if (!p?.getPlayerState) return;
+      const ytState = p.getPlayerState();
+      // If the player is paused but we think it should be playing, resume
+      if (ytState === YTState.PAUSED && playingRef.current && startedRef.current) {
+        try {
+          p.playVideo();
+        } catch { /* noop */ }
+      }
+      // Re-acquire wake lock if we're playing
+      if (playingRef.current) requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       dead = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       stopKeepAlive();
+      releaseWakeLock();
       if (skipTimer.current) window.clearTimeout(skipTimer.current);
       try {
         pRef.current?.destroy?.();
@@ -299,6 +394,7 @@ export function usePlayer(
       }
       pRef.current = null;
       host?.remove();
+      container?.remove();
       if ("mediaSession" in navigator) {
         try {
           navigator.mediaSession.setActionHandler("play", null);
@@ -311,49 +407,64 @@ export function usePlayer(
     };
   }, []);
 
-  /* ---------- progress poll + auto top-up trigger ---------- */
+  /* ---------- adaptive progress poll + auto top-up trigger ---------- */
   useEffect(() => {
     let prevTime = 0;
     let prevBuffered = 0;
-    /* Poll interval increased from 400ms → 500ms — 20% fewer re-renders */
-    const id = window.setInterval(() => {
+    let pollId: number;
+
+    const poll = () => {
       const p = pRef.current;
-      if (!p?.getCurrentTime) return;
-      try {
-        const t = p.getCurrentTime() || 0;
-        /* Guard: only update state if time changed meaningfully (≥0.3s) */
-        if (Math.abs(t - prevTime) >= 0.3) {
-          prevTime = t;
-          setTime(t);
+      if (p?.getCurrentTime) {
+        try {
+          const t = p.getCurrentTime() || 0;
+          /* Guard: only update state if time changed meaningfully (≥0.3s) */
+          if (Math.abs(t - prevTime) >= 0.3) {
+            prevTime = t;
+            setTime(t);
+            if (playingRef.current && Math.abs(t - Math.floor(t)) < 0.2) {
+              updateMediaSession(tracksRef.current[idxRef.current], true, t, p.getDuration?.() || 0);
+            }
+          }
+          const bf = p.getVideoLoadedFraction?.() || 0;
+          /* Guard: only update buffered if it changed meaningfully (≥0.01) */
+          if (Math.abs(bf - prevBuffered) >= 0.01) {
+            prevBuffered = bf;
+            setBuffered(bf);
+          }
+          const d = p.getDuration?.() || 0;
+          if (d > 0) {
+            setDuration((prev) => (Math.abs(prev - d) < 0.5 ? prev : Math.round(d)));
+            const cur = tracksRef.current[idxRef.current];
+            if (cur) {
+              setDurations((prev) => {
+                const prevD = prev[cur.id];
+                if (prevD != null && Math.abs(prevD - d) < 1) return prev;
+                return { ...prev, [cur.id]: Math.round(d) };
+              });
+            }
+          }
+          // ask for similar songs while the current mix still has runway
+          if (
+            shuffleRef.current === "magic" &&
+            playingRef.current &&
+            topUpCb.current &&
+            Date.now() > topUpAtRef.current &&
+            tracksRef.current.length < 24
+          ) {
+            topUpAtRef.current = Date.now() + 45_000;
+            topUpCb.current();
+          }
+        } catch {
+          /* noop */
         }
-        const bf = p.getVideoLoadedFraction?.() || 0;
-        /* Guard: only update buffered if it changed meaningfully (≥0.5%) */
-        if (Math.abs(bf - prevBuffered) >= 0.005) {
-          prevBuffered = bf;
-          setBuffered(bf);
-        }
-        const d = p.getDuration?.() || 0;
-        if (d > 0) {
-          setDuration((prev) => (Math.abs(prev - d) < 0.2 ? prev : d));
-          const cur = tracksRef.current[idxRef.current];
-          if (cur) setDurations((prev) => (prev[cur.id] === d ? prev : { ...prev, [cur.id]: d }));
-        }
-        // ask for similar songs while the current mix still has runway
-        if (
-          shuffleRef.current === "magic" &&
-          playingRef.current &&
-          topUpCb.current &&
-          Date.now() > topUpAtRef.current &&
-          tracksRef.current.length < 24
-        ) {
-          topUpAtRef.current = Date.now() + 45_000;
-          topUpCb.current();
-        }
-      } catch {
-        /* noop */
       }
-    }, 500);
-    return () => window.clearInterval(id);
+      // Adaptive interval: 500ms when playing, 1500ms when paused (cuts background CPU by 66%)
+      pollId = window.setTimeout(poll, playingRef.current ? 500 : 1500);
+    };
+
+    pollId = window.setTimeout(poll, 500);
+    return () => window.clearTimeout(pollId);
   }, []);
 
   /* keep index valid when the queue shrinks */
@@ -371,6 +482,7 @@ export function usePlayer(
       } else {
         startedRef.current = true;
         p.playVideo();
+        requestWakeLock();
       }
     } catch {
       /* noop */

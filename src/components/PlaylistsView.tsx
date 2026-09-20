@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { cn } from "../utils/cn";
 import { persistence, type CustomPlaylist, subscribeToPlaylistChanges } from "../lib/persistence";
 import type { Track } from "../lib/trackModel";
 import { loadYouTubePlaylist } from "../lib/playlist";
@@ -502,36 +503,58 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
   };
 
   return (
-    <div className="flex h-full w-full flex-col overflow-y-auto px-4 py-6 md:px-8 max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--acc0)]/20 text-[var(--acc0)]">
-              <FolderMusicIcon size={18} />
-            </div>
-            <h1 className="text-xl font-semibold tracking-tight text-white">Playlists Hub</h1>
-          </div>
-          <p className="mt-1 text-xs text-[var(--dim)]">
-            Create personal playlists, save favorites, and explore global collections
-          </p>
+    <div className="flex h-full w-full flex-col overflow-y-auto px-4 py-4 md:px-6 max-w-5xl mx-auto space-y-4">
+      {/* Top action row: compact tab filter on left, actions on right */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/8 pb-3 shrink-0">
+        {/* Compact, Theme-Synced Tabs */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 p-1">
+          {(["liked", "private", "global"] as const).map((tab) => {
+            const active = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 font-tmono text-[10.5px] font-semibold uppercase tracking-wider transition-all",
+                  active
+                    ? "bg-[var(--acc0)] text-black shadow-[0_0_12px_-3px_var(--acc0)] font-bold"
+                    : "text-[var(--dim)] hover:text-white hover:bg-white/5"
+                )}
+              >
+                {tab === "liked" ? (
+                  <>
+                    <HeartIcon size={12} className={active ? "fill-black" : ""} /> Liked ({likedTracks.length})
+                  </>
+                ) : tab === "global" ? (
+                  <>
+                    <GlobeIcon size={12} /> Global ({globalPublicPlaylists.length})
+                  </>
+                ) : (
+                  <>
+                    <LockIcon size={11} /> Private ({playlists.filter((p) => !p.isPublic && p.id !== "__liked_songs__").length})
+                  </>
+                )}
+              </button>
+            );
+          })}
         </div>
 
+        {/* Action buttons */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-[var(--acc0)] px-3.5 py-1.5 text-xs font-semibold text-black hover:brightness-110 shadow-sm"
+            className="flex items-center gap-1.5 rounded-lg bg-[var(--acc0)] px-3 py-1.5 font-tmono text-[10.5px] font-bold uppercase tracking-wider text-black transition-all hover:brightness-110 shadow-sm"
           >
-            <PlusIcon size={14} />
+            <PlusIcon size={13} />
             New Playlist
           </button>
 
           {selectedPlaylist && selectedPlaylist.id !== "__liked_songs__" && (
             <button
               onClick={() => setShowImportModal(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/10"
+              className="flex items-center gap-1.5 rounded-lg border border-white/12 bg-white/5 px-3 py-1.5 font-tmono text-[10.5px] font-semibold uppercase tracking-wider text-white hover:bg-white/10"
             >
-              <UploadIcon size={14} />
+              <UploadIcon size={13} />
               Import Tracks
             </button>
           )}
@@ -539,36 +562,11 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       </div>
 
       {/* Main Grid: Left Playlists + Right Tracklist */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
-        {/* Left: Playlists List (4 cols) */}
-        <div className="lg:col-span-4 space-y-3">
-          {/* Tab filter */}
-          <div className="flex rounded-lg bg-black/40 p-1 border border-white/10">
-            {(["liked", "private", "global"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 rounded-md py-1.5 text-xs font-medium capitalize transition-all ${
-                  activeTab === tab
-                    ? "bg-[var(--acc0)] text-black font-semibold shadow-sm"
-                    : "text-[var(--dim)] hover:text-white"
-                }`}
-              >
-                {tab === "liked" ? (
-                  <span className="flex items-center justify-center gap-1">
-                    <HeartIcon size={11} /> Liked
-                  </span>
-                ) : tab === "global" ? (
-                  <span className="flex items-center justify-center gap-1">
-                    Global
-                  </span>
-                ) : tab}
-              </button>
-            ))}
-          </div>
-
+      <div className="grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-4 min-h-0 flex-1">
+        {/* Left: Playlists List */}
+        <div className="space-y-2">
           {/* Playlists Cards */}
-          <div className="space-y-2 max-h-[65vh] overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
             {activeTab === "global" && globalLoading && (
               <div className="flex items-center justify-center py-8 text-[var(--dim)]">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-[var(--acc0)]" />
@@ -626,12 +624,23 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className={`relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-black/40 border border-white/10 ${isLiked ? "bg-gradient-to-br from-purple-600 to-blue-500" : ""}`}>
+                      <div
+                        className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-black/40 border border-white/10"
+                        style={
+                          isLiked
+                            ? {
+                                background:
+                                  "linear-gradient(135deg, color-mix(in srgb, var(--acc0) 40%, transparent), color-mix(in srgb, var(--acc2) 50%, transparent))",
+                                borderColor: "var(--acc0)",
+                              }
+                            : undefined
+                        }
+                      >
                         {pl.tracks.length > 0 || pl.cover ? (
                           <img src={firstCover} alt="" className="h-full w-full object-cover object-center" onError={(e) => { (e.target as HTMLImageElement).src = "/cover-placeholder.jpg"; }} />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-[var(--dim)]">
-                            {isLiked ? <HeartIcon size={18} /> : <DiscIcon size={18} />}
+                            {isLiked ? <HeartIcon size={16} className="text-white fill-current" /> : <DiscIcon size={16} />}
                           </div>
                         )}
                       </div>
@@ -640,18 +649,18 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                         <div className="flex items-center gap-1.5">
                           <span className="truncate text-xs font-semibold text-white">{pl.title}</span>
                           {isLiked ? (
-                            <span title="Liked Songs" className="text-pink-400"><HeartIcon size={11} /></span>
+                            <span title="Liked Songs" className="text-[var(--acc0)]"><HeartIcon size={11} className="fill-current" /></span>
                           ) : isGlobal ? (
                             <span title="Global" className="text-emerald-400"><GlobeIcon size={12} /></span>
                           ) : (
-                            <span title="Private" className="text-amber-400"><LockIcon size={11} /></span>
+                            <span title="Private" className="text-[var(--dim)]"><LockIcon size={11} /></span>
                           )}
                         </div>
-                        <p className="text-[11px] text-[var(--dim)] truncate">
+                        <p className="text-[10.5px] text-[var(--dim)] truncate">
                           {pl.tracks.length} songs {!isLiked && `• ${pl.author}`}
                           {isGlobal && globalLikeCount > 0 && (
-                            <span className="ml-1 text-pink-400/80">
-                              <HeartIcon size={10} className="inline" /> {globalLikeCount}
+                            <span className="ml-1 text-[var(--acc0)] font-medium">
+                              <HeartIcon size={10} className="inline fill-current" /> {globalLikeCount}
                             </span>
                           )}
                         </p>
@@ -667,8 +676,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                         }}
                         className={`shrink-0 rounded-lg p-1.5 transition-colors ${
                           isGlobalLiked
-                            ? "text-pink-400 hover:bg-pink-500/10"
-                            : "text-[var(--dim)] hover:bg-white/10 hover:text-pink-400"
+                            ? "text-[var(--acc0)] hover:bg-[var(--acc0)]/10"
+                            : "text-[var(--dim)] hover:bg-white/10 hover:text-[var(--acc0)]"
                         }`}
                         title={isGlobalLiked ? "Unlike playlist" : "Like playlist"}
                       >
@@ -682,8 +691,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Selected Playlist Details & Tracklist (8 cols) */}
-        <div className="lg:col-span-8 flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        {/* Right: Selected Playlist Details & Tracklist */}
+        <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 min-w-0">
           {selectedPlaylist ? (
             <div className="space-y-4">
               {/* Playlist Banner Header */}

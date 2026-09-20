@@ -195,6 +195,11 @@ class PersistenceManager {
     return this.store;
   }
 
+  public saveStore(store?: PersistentStoreSchema): void {
+    if (store) this.store = store;
+    this.saveToStorage();
+  }
+
   public getPlayback(): PlaybackState {
     return this.store.playback;
   }
@@ -211,6 +216,20 @@ class PersistenceManager {
   public setPreferences(updates: Partial<AppPreferences>): void {
     this.store.preferences = { ...this.store.preferences, ...updates };
     this.saveToStorage();
+  }
+
+  public getCustomTracks(): Track[] {
+    const tracks = new Map<string, Track>();
+    for (const pl of this.store.playlists) {
+      if (Array.isArray(pl.tracks)) {
+        for (const t of pl.tracks) {
+          if (t && (t.id || t.videoId)) {
+            tracks.set(t.id || t.videoId, t);
+          }
+        }
+      }
+    }
+    return Array.from(tracks.values());
   }
 
   public getPlaylists(): CustomPlaylist[] {

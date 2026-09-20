@@ -7,7 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Dependencies
+# Dependencies & Build
 node_modules
 dist
 dist-ssr
@@ -18,7 +18,11 @@ dist-ssr
 .env.*
 !.env.example
 
-# IDE & Editor files
+# Temporary, scratch & backup files
+scratch/
+*.bak
+
+# IDE & OS files
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -30,6 +34,6 @@ dist-ssr
 *.sw?
 Thumbs.db
 
-# Agent / Tooling local caches
+# Tooling local caches
 .agents/
 skills-lock.json

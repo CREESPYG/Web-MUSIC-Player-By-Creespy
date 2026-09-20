@@ -1,9 +1,9 @@
 import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { PlayerApi } from "../hooks/usePlayer";
+export type { PlayerApi };
 import { fmtTime } from "../lib/color";
 import { cn } from "../utils/cn";
-import { DigitFlipper } from "./DigitFlipper";
 import {
   MuteIcon,
   NextIcon,
@@ -34,12 +34,14 @@ export function Controls({
   roomPerms,
   inRoom = false,
   hideTime = false,
+  onSeek,
 }: {
   player: PlayerApi;
   locked?: boolean;
   roomPerms?: RoomPerms;
   inRoom?: boolean;
   hideTime?: boolean;
+  onSeek?: (pos: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
   const [scrub, setScrub] = useState<number | null>(null);
@@ -76,11 +78,11 @@ export function Controls({
           </span>
         </div>
       )}
-      {/* Seek row with DigitFlipper timestamps (hidden when hideTime) */}
+      {/* Seek row with clean monospace timestamps (hidden when hideTime) */}
       {!hideTime && (
         <div className="flex items-center gap-3">
           <span className="w-12 text-right font-tmono text-[11px] tabular-nums text-[var(--dim)] font-medium">
-            <DigitFlipper value={formattedTime} />
+            {formattedTime}
           </span>
           <div
             ref={barRef}
@@ -95,6 +97,7 @@ export function Controls({
             onPointerUp={() => {
               if (scrub !== null) {
                 player.seek(scrub);
+                onSeek?.(scrub);
                 setScrub(null);
               }
             }}
@@ -132,7 +135,7 @@ export function Controls({
             )}
           </div>
           <span className="w-12 font-tmono text-[11px] tabular-nums text-[var(--dim)] font-medium">
-            <DigitFlipper value={formattedDuration} />
+            {formattedDuration}
           </span>
         </div>
       )}

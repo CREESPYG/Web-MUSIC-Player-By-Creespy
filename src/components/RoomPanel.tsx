@@ -13,10 +13,13 @@ import {
   HeadphonesIcon,
   GroupIcon,
   LockIcon,
+  MicIcon,
+  ShieldIcon,
   NotificationsIcon,
   SendIcon,
   Switch,
 } from "./UiIcons";
+import { VoicePanel } from "./VoicePanel";
 
 const PERM_LABELS: [keyof Permissions, string][] = [
   ["play_pause", "Play / Pause"],
@@ -35,13 +38,36 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
   const [allowChat, setAllowChat] = useState(true);
   const [joinCode, setJoinCode] = useState("");
   const [nick, setNick] = useState(room.nickname);
+  const [editingNick, setEditingNick] = useState(false);
+  const [editingNickVal, setEditingNickVal] = useState("");
+  const nickInputRef = useRef<HTMLInputElement>(null);
   const [chatDraft, setChatDraft] = useState("");
-  const [inRoomTab, setInRoomTab] = useState<"chat" | "settings" | "people">("chat");
+  const [inRoomTab, setInRoomTab] = useState<"voice" | "chat" | "settings" | "people">("chat");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setNick(room.nickname);
+  }, [room.nickname]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [room.chat.length]);
+  }, [room.chat.length, room.typingUsers.length]);
+
+  useEffect(() => {
+    if (open && inRoomTab === "chat") {
+      room.markChatAsRead();
+    }
+  }, [open, inRoomTab, room.chat.length, room.markChatAsRead]);
+
+  const ensureNick = (): boolean => {
+    const val = (nick || room.nickname || "").trim();
+    if (!val) {
+      onToast("Please enter your name first!");
+      nickInputRef.current?.focus();
+      return false;
+    }
+    return true;
+  };
 
   const copy = (text: string, label: string) => {
     navigator.clipboard?.writeText(text).then(() => onToast(`${label} copied`)).catch(() => onToast("Copy failed"));
@@ -60,17 +86,17 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 34 }}
-            className="fixed right-0 top-0 z-[66] flex h-[100dvh] w-full max-w-[min(400px,100vw)] flex-col border-l border-white/10"
-            style={{ background: "linear-gradient(180deg, rgba(9,14,22,0.97), rgba(6,10,17,0.99))", backdropFilter: "blur(26px)", paddingBottom: "env(safe-area-inset-bottom)" }}
+            className="fixed right-0 top-0 z-[66] flex h-[100dvh] w-full max-w-[min(620px,100vw)] sm:w-[500px] md:w-[540px] lg:w-[580px] xl:w-[620px] flex-col border-l border-white/10 shadow-[-16px_0_48px_rgba(0,0,0,0.65)]"
+            style={{ background: "linear-gradient(180deg, rgba(9,14,22,0.98), rgba(6,10,17,0.99))", backdropFilter: "blur(26px)", paddingBottom: "env(safe-area-inset-bottom)" }}
             aria-label="Room panel"
           >
             {/* header */}
-            <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-3.5">
-              <h3 className="flex items-center gap-2 font-display text-[15px] font-bold tracking-[0.05em] text-[var(--ink)]">
-                <HeadphonesIcon size={16} className="text-[var(--acc0)]" /> Listen Together
+            <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-6 py-4">
+              <h3 className="flex items-center gap-2.5 font-display text-[16px] font-bold tracking-[0.05em] text-[var(--ink)]">
+                <HeadphonesIcon size={18} className="text-[var(--acc0)]" /> Listen Together
                 {inRoom && (
                   <span
-                    className="ml-1 flex items-center gap-1 rounded-full px-2 py-0.5 font-tmono text-[8px] uppercase tracking-[0.12em]"
+                    className="ml-1.5 flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-tmono text-[8.5px] uppercase tracking-[0.12em]"
                     style={{ color: room.connection === "connected" ? "var(--acc2)" : "var(--dim)" }}
                   >
                     <span className="live-dot h-1.5 w-1.5 rounded-full" style={{ background: room.connection === "connected" ? "var(--acc2)" : "#f5a97f" }} />
@@ -79,11 +105,11 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                 )}
               </h3>
               <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-[var(--dim)] transition-colors hover:bg-white/8 hover:text-white" aria-label="Close">
-                <CloseIcon size={17} />
+                <CloseIcon size={18} />
               </button>
             </div>
 
-            <div className="scroll-slim flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-4">
+            <div className="scroll-slim flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
               {/* ---------------- LOBBY (idle / create + join) ---------------- */}
               {!inRoom && room.status !== "waiting" && room.status !== "requesting" && (
                 <div className="flex flex-col gap-5">
@@ -99,16 +125,103 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
 
                   {/* nickname */}
                   <div>
-                    <p className="mb-2 font-tmono text-[9px] uppercase tracking-[0.24em] text-[var(--dim)]">Your name</p>
+                    <p className="mb-2 font-tmono text-[9px] uppercase tracking-[0.24em] text-[var(--dim)]">
+                      Your name <span className="text-[var(--acc0)]">*</span>
+                    </p>
                     <input
+                      ref={nickInputRef}
                       value={nick}
                       onChange={(e) => {
                         setNick(e.target.value);
-                        room.updateNickname(e.target.value);
+                        const clean = e.target.value.trim();
+                        if (clean && clean !== "false") {
+                          room.updateNickname(clean);
+                        }
                       }}
-                      placeholder="Nickname"
+                      onBlur={() => {
+                        const clean = (nick || "").trim();
+                        if (clean && clean !== "false") {
+                          room.updateNickname(clean);
+                        } else {
+                          setNick(room.nickname);
+                        }
+                      }}
+                      placeholder="Enter your name (required)"
                       className="w-full rounded-[var(--radius-s)] border border-white/12 bg-white/6 px-3 py-2.5 text-[13px] text-[var(--ink)] outline-none placeholder:text-[var(--dim)]/60 focus:border-[var(--acc0)]/60"
                     />
+                  </div>
+
+                  {/* active public rooms directory (shown immediately below name input) */}
+                  <div className="rounded-[var(--radius)] border border-white/8 bg-white/[0.03] p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="flex items-center gap-1.5 font-display text-[12px] font-bold uppercase tracking-[0.16em] text-[var(--ink)]">
+                        <GlobeIcon size={13} className="text-[var(--acc0)]" /> Active Public Rooms
+                      </p>
+                      <span className="font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]">
+                        {room.publicRooms.length} live
+                      </span>
+                    </div>
+                    {room.publicRooms.length === 0 ? (
+                      <p className="rounded-[var(--radius-s)] border border-white/8 bg-white/[0.02] px-3 py-4 text-center font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]/60">
+                        no public rooms right now — create one below!
+                      </p>
+                    ) : (
+                      <div className="scroll-slim flex max-h-[220px] flex-col gap-2 overflow-y-auto pr-0.5">
+                        {room.publicRooms.map((r) => (
+                          <div key={r.code} className="flex items-center gap-3 rounded-[var(--radius-s)] border border-white/8 bg-white/[0.03] p-2.5 hover:border-white/15 transition-all">
+                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--acc0)]" style={{ background: "color-mix(in srgb, var(--acc0) 14%, transparent)" }}>
+                              <HeadphonesIcon size={18} />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[13px] font-bold text-[var(--ink)]">{r.name}</p>
+                              <p className="flex items-center gap-2 font-tmono text-[8.5px] uppercase tracking-[0.12em] text-[var(--dim)]">
+                                <span>{r.hostName}</span>
+                                <span className="flex items-center gap-1">
+                                  <span className="live-dot h-1.5 w-1.5 rounded-full bg-[var(--acc2)]" />
+                                  {r.count}
+                                </span>
+                                {r.requireApproval && <span className="text-[var(--acc1)]">approval</span>}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                if (!ensureNick()) return;
+                                room.joinRoom(r.code, nick);
+                              }}
+                              className="shrink-0 rounded-full px-3.5 py-1.5 font-tmono text-[9px] uppercase tracking-[0.1em] text-black font-semibold shadow-sm"
+                              style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
+                            >
+                              {r.requireApproval ? "request" : "join"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* join with invite code (positioned above create a room) */}
+                  <div className="rounded-[var(--radius)] border border-white/8 bg-white/[0.03] p-4">
+                    <p className="mb-2 font-display text-[12px] font-bold uppercase tracking-[0.16em] text-[var(--ink)]">Join with invite code</p>
+                    <div className="flex gap-2">
+                      <input
+                        value={joinCode}
+                        onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. 7X42K"
+                        maxLength={8}
+                        className="min-w-0 flex-1 rounded-[var(--radius-s)] border border-white/12 bg-white/6 px-3.5 py-2.5 font-tmono text-[14px] uppercase tracking-[0.25em] text-[var(--ink)] outline-none placeholder:tracking-normal placeholder:text-[var(--dim)]/60 focus:border-[var(--acc0)]/60"
+                      />
+                      <button
+                        onClick={() => {
+                          if (!joinCode.trim()) return onToast("Enter a room code");
+                          if (!ensureNick()) return;
+                          room.joinRoom(joinCode, nick);
+                        }}
+                        className="shrink-0 rounded-[var(--radius-s)] px-5 font-tmono text-[10.5px] uppercase tracking-[0.14em] text-black font-semibold"
+                        style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
+                      >
+                        Enter
+                      </button>
+                    </div>
                   </div>
 
                   {/* create */}
@@ -229,83 +342,15 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
 
                     <button
                       onClick={() => {
-                        const info = room.createRoom({ name, type, requireApproval: approval, control, chatEnabled: allowChat });
-                        onToast(`Room ${info.code} created`);
+                        if (!ensureNick()) return;
+                        const info = room.createRoom({ name, type, requireApproval: approval, control, chatEnabled: allowChat, nickname: nick });
+                        if (info) onToast(`Room ${info.code} created`);
                       }}
                       className="mt-2 w-full rounded-[var(--radius-s)] py-2.5 font-tmono text-[10px] uppercase tracking-[0.14em] text-black"
                       style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
                     >
                       Create room
                     </button>
-                  </div>
-
-                  {/* join */}
-                  <div className="rounded-[var(--radius)] border border-white/8 bg-white/[0.03] p-4">
-                    <p className="mb-2 font-display text-[12px] font-bold uppercase tracking-[0.16em] text-[var(--ink)]">Join with invite code</p>
-                    <div className="flex gap-2">
-                      <input
-                        value={joinCode}
-                        onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                        placeholder="e.g. 7X42K"
-                        maxLength={8}
-                        className="min-w-0 flex-1 rounded-[var(--radius-s)] border border-white/12 bg-white/6 px-3.5 py-2.5 font-tmono text-[14px] uppercase tracking-[0.25em] text-[var(--ink)] outline-none placeholder:tracking-normal placeholder:text-[var(--dim)]/60 focus:border-[var(--acc0)]/60"
-                      />
-                      <button
-                        onClick={() => {
-                          if (!joinCode.trim()) return onToast("Enter a room code");
-                          room.joinRoom(joinCode, nick);
-                        }}
-                        className="shrink-0 rounded-[var(--radius-s)] px-5 font-tmono text-[10.5px] uppercase tracking-[0.14em] text-black font-semibold"
-                        style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
-                      >
-                        Enter
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* public rooms directory */}
-                  <div className="rounded-[var(--radius)] border border-white/8 bg-white/[0.03] p-4">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="flex items-center gap-1.5 font-display text-[12px] font-bold uppercase tracking-[0.16em] text-[var(--ink)]">
-                        <GlobeIcon size={13} className="text-[var(--acc0)]" /> Public rooms
-                      </p>
-                      <span className="font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]">
-                        {room.publicRooms.length} live
-                      </span>
-                    </div>
-                    {room.publicRooms.length === 0 ? (
-                      <p className="rounded-[var(--radius-s)] border border-white/8 bg-white/[0.02] px-3 py-4 text-center font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]/60">
-                        no public rooms right now — create one!
-                      </p>
-                    ) : (
-                      <div className="scroll-slim flex max-h-[220px] flex-col gap-2 overflow-y-auto pr-0.5">
-                        {room.publicRooms.map((r) => (
-                          <div key={r.code} className="flex items-center gap-3 rounded-[var(--radius-s)] border border-white/8 bg-white/[0.03] p-2.5">
-                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--acc0)]" style={{ background: "color-mix(in srgb, var(--acc0) 14%, transparent)" }}>
-                              <HeadphonesIcon size={18} />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-[13px] font-bold text-[var(--ink)]">{r.name}</p>
-                              <p className="flex items-center gap-2 font-tmono text-[8.5px] uppercase tracking-[0.12em] text-[var(--dim)]">
-                                <span>{r.hostName}</span>
-                                <span className="flex items-center gap-1">
-                                  <span className="live-dot h-1.5 w-1.5 rounded-full bg-[var(--acc2)]" />
-                                  {r.count}
-                                </span>
-                                {r.requireApproval && <span className="text-[var(--acc1)]">approval</span>}
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => room.joinRoom(r.code, nick)}
-                              className="shrink-0 rounded-full px-3.5 py-1.5 font-tmono text-[9px] uppercase tracking-[0.1em] text-black"
-                              style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
-                            >
-                              {r.requireApproval ? "request" : "join"}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -361,14 +406,27 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                   {/* In-room Navigation Tabs */}
                   <div className={cn(
                     "grid gap-1 rounded-[var(--radius-s)] border border-white/8 bg-white/[0.04] p-1 shrink-0",
-                    room.isHost ? "grid-cols-3" : "grid-cols-2"
+                    room.isHost ? "grid-cols-4" : "grid-cols-3"
                   )}>
+                    <button
+                      onClick={() => setInRoomTab("voice")}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 rounded-md py-2 font-tmono text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors",
+                        inRoomTab === "voice"
+                          ? "bg-[var(--acc0)] text-black font-bold shadow-sm"
+                          : "text-[var(--dim)] hover:text-white hover:bg-white/4"
+                      )}
+                    >
+                      <MicIcon size={12} />
+                      <span>Voice</span>
+                      {room.voice.isInVoice && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                    </button>
                     <button
                       onClick={() => setInRoomTab("chat")}
                       className={cn(
                         "flex items-center justify-center gap-1.5 rounded-md py-2 font-tmono text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors",
                         inRoomTab === "chat"
-                          ? "bg-[var(--acc0)] text-black font-bold"
+                          ? "bg-[var(--acc0)] text-black font-bold shadow-sm"
                           : "text-[var(--dim)] hover:text-white hover:bg-white/4"
                       )}
                     >
@@ -380,7 +438,7 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                       className={cn(
                         "flex items-center justify-center gap-1.5 rounded-md py-2 font-tmono text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors",
                         inRoomTab === "people"
-                          ? "bg-[var(--acc0)] text-black font-bold"
+                          ? "bg-[var(--acc0)] text-black font-bold shadow-sm"
                           : "text-[var(--dim)] hover:text-white hover:bg-white/4"
                       )}
                     >
@@ -393,20 +451,54 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                         className={cn(
                           "relative flex items-center justify-center gap-1.5 rounded-md py-2 font-tmono text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors",
                           inRoomTab === "settings"
-                            ? "bg-[var(--acc0)] text-black font-bold"
+                            ? "bg-[var(--acc0)] text-black font-bold shadow-sm"
                             : "text-[var(--dim)] hover:text-white hover:bg-white/4"
                         )}
                       >
                         <CrownIcon size={12} />
-                        <span>Settings</span>
+                        <span>Host</span>
                         {room.requests.length > 0 && (
-                          <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#ff6b7a] text-[8.5px] font-bold text-white shadow-sm">
+                          <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--acc1)] text-[9px] font-bold text-black">
                             {room.requests.length}
                           </span>
                         )}
                       </button>
                     )}
                   </div>
+
+                  {/* Floating Mini Voice Bar (when connected to voice but viewing chat or people) */}
+                  {room.voice.isInVoice && inRoomTab !== "voice" && (
+                    <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 shrink-0 backdrop-blur-md">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                        <span className="font-display text-[11px] font-bold text-white truncate">Voice Active</span>
+                        <span className="font-tmono text-[9.5px] text-[var(--dim)] shrink-0">({room.voice.voiceCount})</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={room.voice.toggleSelfMute}
+                          className="rounded-lg bg-white/10 px-2 py-1 font-tmono text-[9px] font-semibold text-white hover:bg-white/15"
+                        >
+                          {room.voice.selfMuted ? "Unmute" : "Mute"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setInRoomTab("voice")}
+                          className="rounded-lg bg-[var(--acc0)] px-2 py-1 font-tmono text-[9px] font-bold text-black"
+                        >
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 0: VOICE */}
+                  {inRoomTab === "voice" && (
+                    <div className="flex flex-1 min-h-0 flex-col">
+                      <VoicePanel room={room} onToast={onToast} isMobile={false} />
+                    </div>
+                  )}
 
                   {/* TAB 1: LIVE CHAT (Spacious, full height) */}
                   {inRoomTab === "chat" && (
@@ -441,50 +533,124 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                         )}
                       </div>
 
-                      <div className="scroll-slim flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+                      <div className="scroll-slim flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-0.5">
                         {room.chat.length === 0 && (
                           <p className="py-12 text-center font-tmono text-[9.5px] uppercase tracking-[0.14em] text-[var(--dim)]/60">
                             say hello to the room
                           </p>
                         )}
-                        {room.chat.map((c) => (
-                          <div key={c.id} className={cn("group flex flex-col", c.mine ? "items-end" : "items-start")}>
-                            <div
-                              className={cn(
-                                "max-w-[85%] rounded-2xl px-3.5 py-2",
-                                c.mine
-                                  ? "bg-[var(--acc0)]/20 text-[var(--ink)] border border-[var(--acc0)]/25"
-                                  : "bg-white/8 text-[var(--ink)] border border-white/10"
-                              )}
-                            >
-                              {!c.mine && (
-                                <p className="mb-0.5 font-tmono text-[8.5px] font-semibold uppercase tracking-[0.1em] text-[var(--acc1)]">
-                                  {c.nickname}
-                                </p>
-                              )}
-                              <p className="break-words text-[13px] leading-relaxed">{c.message}</p>
-                            </div>
-                            {(c.mine || room.isHost) && (
-                              <button
-                                onClick={() => room.deleteChat(c.id)}
-                                className="mt-0.5 font-tmono text-[8px] uppercase tracking-[0.1em] text-[var(--dim)]/0 transition-colors group-hover:text-[var(--dim)] hover:!text-[#ff9aa6]"
+                        {room.chat.map((c) => {
+                          if (c.system) {
+                            return (
+                              <div key={c.id} className="my-1 flex justify-center">
+                                <span className="rounded-full border border-white/8 bg-white/6 px-3 py-1 font-tmono text-[9.5px] text-[var(--dim)]">
+                                  {c.message}
+                                </span>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={c.id} className={cn("group flex flex-col", c.mine ? "items-end" : "items-start")}>
+                              <div
+                                className={cn(
+                                  "max-w-[85%] rounded-2xl px-3.5 py-2 shadow-sm transition-all",
+                                  c.mine
+                                    ? "border border-[var(--acc0)]/30 bg-[var(--acc0)]/20 text-[var(--ink)]"
+                                    : "border border-white/10 bg-white/8 text-[var(--ink)]"
+                                )}
                               >
-                                delete
-                              </button>
-                            )}
+                                {!c.mine && (
+                                  <p className="mb-0.5 font-tmono text-[8.5px] font-semibold uppercase tracking-[0.1em] text-[var(--acc1)]">
+                                    {c.nickname}
+                                  </p>
+                                )}
+                                <p className="break-words text-[13px] leading-relaxed">{c.message}</p>
+                              </div>
+
+                              {/* Message Status & Timestamp Row */}
+                              <div className={cn("mt-1 flex items-center gap-1.5 px-1 font-tmono text-[8.5px] text-[var(--dim)]", c.mine ? "justify-end" : "justify-start")}>
+                                <span>{new Date(c.ts || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                                {c.mine && (
+                                  <div className="flex items-center gap-1">
+                                    {c.status === "sending" && (
+                                      <span className="flex items-center gap-1 text-[var(--dim)]">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--acc0)] animate-ping" /> sending…
+                                      </span>
+                                    )}
+                                    {c.status === "sent" && (
+                                      <span className="text-[var(--dim)]" title="Sent to server">
+                                        ✓ <span className="text-[8px] opacity-75">sent</span>
+                                      </span>
+                                    )}
+                                    {c.status === "delivered" && (
+                                      <span className="text-[var(--dim)] font-medium" title="Delivered to room">
+                                        ✓✓ <span className="text-[8px] opacity-75">delivered</span>
+                                      </span>
+                                    )}
+                                    {c.status === "read" && (
+                                      <span className="text-[var(--acc0)] font-bold drop-shadow-sm" title="Seen by room">
+                                        ✓✓ <span className="text-[8px]">read</span>
+                                      </span>
+                                    )}
+                                    {c.status === "failed" && (
+                                      <span className="flex items-center gap-1 text-[#ff6b7a]">
+                                        <span>failed</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => room.retryChat(c.id)}
+                                          className="rounded bg-[#ff6b7a]/20 px-1.5 py-0.5 text-[8px] font-semibold uppercase text-[#ffb3ba] hover:bg-[#ff6b7a]/30"
+                                        >
+                                          retry
+                                        </button>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {(c.mine || room.isHost) && (
+                                  <button
+                                    onClick={() => room.deleteChat(c.id)}
+                                    className="text-[8px] uppercase tracking-[0.1em] text-[var(--dim)]/0 transition-colors group-hover:text-[var(--dim)] hover:!text-[#ff9aa6]"
+                                  >
+                                    delete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Real-time Typing Indicator Bubble */}
+                        {room.typingUsers && room.typingUsers.length > 0 && (
+                          <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/4 px-3 py-1.5 font-tmono text-[9.5px] text-[var(--dim)] w-fit animate-pulse my-1">
+                            <div className="flex gap-1">
+                              <span className="h-1.5 w-1.5 rounded-full bg-[var(--acc0)] animate-bounce" style={{ animationDelay: "0ms" }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-[var(--acc0)] animate-bounce" style={{ animationDelay: "150ms" }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-[var(--acc0)] animate-bounce" style={{ animationDelay: "300ms" }} />
+                            </div>
+                            <span>
+                              {room.typingUsers.length === 1
+                                ? `${room.typingUsers[0]} is typing…`
+                                : room.typingUsers.length === 2
+                                  ? `${room.typingUsers[0]} and ${room.typingUsers[1]} are typing…`
+                                  : `${room.typingUsers[0]} and ${room.typingUsers.length - 1} others are typing…`}
+                            </span>
                           </div>
-                        ))}
+                        )}
                         <div ref={chatEndRef} />
                       </div>
 
                       {/* Chat Input or Muted Notice */}
-                      {(room.room.chatEnabled ?? true) || room.isHost ? (
+                      {(room.room?.chatEnabled ?? true) || room.isHost ? (
                         <div className="mt-2.5 flex gap-2 shrink-0">
                           <input
                             value={chatDraft}
-                            onChange={(e) => setChatDraft(e.target.value)}
+                            onChange={(e) => {
+                              setChatDraft(e.target.value);
+                              room.sendTyping(e.target.value.trim().length > 0);
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" && chatDraft.trim()) {
+                                e.preventDefault();
                                 room.sendChat(chatDraft);
                                 setChatDraft("");
                               }
@@ -527,34 +693,92 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                               <span
                                 className={cn(
                                   "grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold",
-                                  m.role === "host"
-                                    ? "bg-[var(--acc0)]/15 text-[var(--acc0)]"
+                                  m.role === "owner"
+                                    ? "bg-[var(--acc0)]/20 text-[var(--acc0)] ring-1 ring-[var(--acc0)]/40"
+                                    : m.role === "host"
+                                    ? "bg-cyan-400/20 text-cyan-300 ring-1 ring-cyan-400/30"
                                     : "bg-white/8 text-[var(--dim)]"
                                 )}
                               >
-                                {m.role === "host" ? <CrownIcon size={14} /> : m.nickname.slice(0, 1).toUpperCase()}
+                                {m.role === "owner" ? <CrownIcon size={14} /> : m.role === "host" ? <ShieldIcon size={13} /> : m.nickname.slice(0, 1).toUpperCase()}
                               </span>
-                              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--ink)]">
-                                {m.nickname}
-                                {m.id === room.me && <span className="text-[var(--dim)]"> (you)</span>}
-                                {m.role === "host" && (
-                                  <span className="ml-1.5 rounded bg-[var(--acc0)]/20 px-1.5 py-0.5 font-tmono text-[8px] font-semibold text-[var(--acc0)]">
-                                    HOST
-                                  </span>
-                                )}
-                              </span>
-                              {room.isHost && m.id !== room.me && (
-                                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              {editingNick && m.id === room.me ? (
+                                <form
+                                  onSubmit={(e) => {
+                                    e.preventDefault();
+                                    const clean = editingNickVal.trim();
+                                    if (clean && clean !== "false") {
+                                      room.updateNickname(clean);
+                                      setEditingNick(false);
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 flex-1 min-w-0"
+                                >
+                                  <input
+                                    value={editingNickVal}
+                                    onChange={(e) => setEditingNickVal(e.target.value)}
+                                    autoFocus
+                                    maxLength={24}
+                                    className="rounded border border-[var(--acc0)]/60 bg-white/10 px-2 py-0.5 text-[12px] text-white outline-none w-28"
+                                  />
                                   <button
-                                    onClick={() => room.transferHost(m.id)}
-                                    title="Make host"
-                                    className="rounded px-2 py-1 font-tmono text-[8.5px] uppercase tracking-[0.1em] text-[var(--dim)] hover:text-[var(--acc0)] hover:bg-white/6"
+                                    type="submit"
+                                    className="rounded bg-[var(--acc0)] px-2 py-0.5 text-[10px] font-bold text-black hover:brightness-110"
                                   >
-                                    host
+                                    Save
                                   </button>
                                   <button
+                                    type="button"
+                                    onClick={() => setEditingNick(false)}
+                                    className="rounded px-1.5 py-0.5 text-[10px] text-[var(--dim)] hover:text-white"
+                                  >
+                                    Cancel
+                                  </button>
+                                </form>
+                              ) : (
+                                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--ink)] flex items-center gap-1.5">
+                                  <span className="truncate">{m.nickname}</span>
+                                  {m.id === room.me && (
+                                    <>
+                                      <span className="text-[var(--dim)] text-[11px]">(you)</span>
+                                      <button
+                                        onClick={() => {
+                                          setEditingNickVal(m.nickname);
+                                          setEditingNick(true);
+                                        }}
+                                        title="Change your nickname"
+                                        className="rounded px-1.5 py-0.5 font-tmono text-[8px] uppercase tracking-wider text-[var(--dim)] hover:text-[var(--acc0)] hover:bg-white/6"
+                                      >
+                                        edit
+                                      </button>
+                                    </>
+                                  )}
+                                  {m.role === "owner" && (
+                                    <span className="ml-1.5 rounded bg-[var(--acc0)]/20 px-1.5 py-0.5 font-tmono text-[8px] font-bold text-[var(--acc0)]">
+                                      OWNER
+                                    </span>
+                                  )}
+                                  {m.role === "host" && (
+                                    <span className="ml-1.5 rounded bg-cyan-400/20 px-1.5 py-0.5 font-tmono text-[8px] font-bold text-cyan-300">
+                                      CO-HOST
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              {room.isHost && m.id !== room.me && m.role !== "owner" && (room.isOwner || m.role !== "host") && (
+                                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                  {room.isOwner && (
+                                    <button
+                                      onClick={() => (m.role === "member" ? room.promoteToHost(m.id) : room.demoteHost(m.id))}
+                                      title={m.role === "member" ? "Promote to Co-Host" : "Demote to Member"}
+                                      className="rounded px-2 py-1 font-tmono text-[8.5px] uppercase tracking-[0.1em] text-[var(--dim)] hover:text-cyan-300 hover:bg-cyan-500/10"
+                                    >
+                                      {m.role === "member" ? "make host" : "demote"}
+                                    </button>
+                                  )}
+                                  <button
                                     onClick={() => room.kick(m.id)}
-                                    title="Remove"
+                                    title="Remove from room"
                                     className="rounded p-1 text-[var(--dim)] hover:text-[#ff9aa6] hover:bg-[#ff6b7a]/10"
                                   >
                                     <CloseIcon size={14} />
@@ -567,21 +791,12 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                       </div>
 
                       <div className="mt-auto pt-2">
-                        {room.isHost ? (
-                          <button
-                            onClick={room.closeRoom}
-                            className="w-full rounded-[var(--radius-s)] border border-[#ff6b7a]/35 bg-[#ff6b7a]/10 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.12em] text-[#ff9aa6] hover:bg-[#ff6b7a]/20"
-                          >
-                            close room for everyone
-                          </button>
-                        ) : (
-                          <button
-                            onClick={room.leave}
-                            className="w-full rounded-[var(--radius-s)] border border-white/12 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.12em] text-[var(--dim)] hover:text-white hover:bg-white/6"
-                          >
-                            leave room
-                          </button>
-                        )}
+                        <button
+                          onClick={room.leave}
+                          className="w-full rounded-[var(--radius-s)] border border-white/12 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.12em] text-[var(--dim)] hover:text-white hover:bg-white/6 transition-colors"
+                        >
+                          leave room
+                        </button>
                       </div>
                     </div>
                   )}

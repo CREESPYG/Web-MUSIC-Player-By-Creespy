@@ -29,8 +29,8 @@ import { usePlayer, type PlayerApi } from "./hooks/usePlayer";
 import { useBeatDriver } from "./hooks/useBeat";
 import { usePresence } from "./hooks/usePresence";
 import { useSettings } from "./hooks/useSettings";
+import { useNativeAudioBridge } from "./hooks/useNativeAudioBridge";
 import { BackgroundCanvas } from "./components/BackgroundCanvas";
-import { CursorGlow } from "./components/CursorGlow";
 import { RippleLayer } from "./components/RippleLayer";
 import { MediaLayer } from "./components/MediaLayer";
 import { TopBar, type ViewMode } from "./components/TopBar";
@@ -48,10 +48,21 @@ import { Toasts, type Toast } from "./components/Toasts";
 import { FolderMusicIcon, CloseIcon, ListMusicIcon, ClockOnlyIcon } from "./components/UiIcons";
 import { cn } from "./utils/cn";
 import { persistence } from "./lib/persistence";
+import { deriveAccents } from "./lib/color";
+import { initMemoryOptimizer, setMemoryGovernorPlayerActive, trackBlobUrl, untrackBlobUrl } from "./lib/memoryManager";
+import { MobileShell } from "./components/mobile/MobileShell";
 
 type MobileTab = "queue" | "clock";
 
 export default function App() {
+  /* ---------------- memory lifecycle manager ---------------- */
+  useEffect(() => {
+    return initMemoryOptimizer();
+  }, []);
+
+  /* ---------------- cleanup toast timers on unmount ---------------- */
+  useEffect(() => () => toastTimersRef.current.forEach(window.clearTimeout), []);
+
   /* ---------------- theme ---------------- */
   const [themeId, setThemeId] = useState<string>(() => localStorage.getItem("ripple-theme") || THEMES[0].id);
   const theme = THEMES.find((t) => t.id === themeId) ?? THEMES[0];
@@ -66,10 +77,13 @@ export default function App() {
 
   /* ---------------- toasts ---------------- */
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastTimersRef = useRef<number[]>([]);
   const pushToast = useCallback((msg: string) => {
     const id = Date.now() + Math.random();
     setToasts((ts) => [...ts.slice(-2), { id, msg }]);
-    window.setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 2800);
+    toastTimersRef.current.push(window.setTimeout(() => {
+      setToasts((ts) => ts.filter((t) => t.id !== id));
+    }, 2800));
   }, []);
 
   /* ---------------- queue & tracks ---------------- */
@@ -218,7 +232,21 @@ export default function App() {
   const player = usePlayer(tracks, pushToast, () => topUpSimilar(false));
   playerRef.current = player;
   const track = tracks[player.index] ?? tracks[0];
-  useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1);
+  useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time);
+
+  /* ---------------- native Android audio bridge ---------------- */
+  useNativeAudioBridge(
+    track,
+    player.playing,
+    () => player.toggle(),
+    () => player.toggle(),
+    () => player.next(),
+    () => player.prev(),
+  );
+
+  useEffect(() => {
+    setMemoryGovernorPlayerActive(player.playing);
+  }, [player.playing]);
 
   // Restore last played track + position on mount
   const restoredRef = useRef(false);
@@ -308,7 +336,7 @@ export default function App() {
     saveCustomTracks(q);
   }, []);
 
-  const room = useRoom({ getPlayback, applyPlayback, getQueue, applyQueue });
+  const room = useRoom({ getPlayback, applyPlayback, getQueue, applyQueue, onToast: pushToast });
   const roomRef = useRef(room);
   roomRef.current = room;
 
@@ -329,44 +357,105 @@ export default function App() {
 
   const isRemoteUpdate = useRef(false);
 
-  // Drift-corrected member playback follower
+  // Auto-pause when kicked/closed from room
   useEffect(() => {
-    if (!roomTarget || room.isHost) return;
+    if (room.status === "closed" || room.status === "denied") {
+      if (playerRef.current?.playing) {
+        isRemoteUpdate.current = true;
+        playerRef.current.toggle();
+        const t = window.setTimeout(() => { isRemoteUpdate.current = false; }, 300);
+        return () => window.clearTimeout(t);
+      }
+    }
+  }, [room.status]);
+
+  // Drift-corrected playback follower (works for host AND members)
+  // When the host receives a broadcast from a permitted member, this applies
+  // it to the host's player so the host relays the correct state via heartbeat.
+  useEffect(() => {
+    if (!roomTarget) return;
     const list = tracksRef.current;
     const idx = list.findIndex((t) => t.videoId === roomTarget.videoId);
     if (idx === -1) return;
     const p = playerRef.current;
     if (!p) return;
     const expected = roomTarget.position + (roomTarget.isPlaying ? (Date.now() - roomTarget.ts) / 1000 : 0);
+    const isHostRelay = room.isOwner;
     if (idx !== p.index) {
       isRemoteUpdate.current = true;
       p.cue(idx, roomTarget.isPlaying);
       window.setTimeout(() => {
         playerRef.current?.seek(Math.max(0, expected));
         isRemoteUpdate.current = false;
+        if (isHostRelay) room.pushPlayback();
       }, 550);
     } else {
-      if (Math.abs(p.time - expected) > 2.5) p.seek(Math.max(0, expected));
+      if (Math.abs(p.time - expected) > 1.5) p.seek(Math.max(0, expected));
       if (roomTarget.isPlaying !== p.playing) {
         isRemoteUpdate.current = true;
         p.toggle();
         window.setTimeout(() => {
           isRemoteUpdate.current = false;
+          if (isHostRelay) room.pushPlayback();
         }, 300);
       }
     }
-  }, [roomTarget, tracks, room.isHost]);
+  }, [roomTarget, tracks, room.isOwner]);
 
-  // Playback broadcast: Host broadcasts authoritatively; permitted member broadcasts manual action
+  // Playback broadcast: Only broadcast when the local user MANUALLY changes track or toggles play/pause.
+  // Never broadcast just because permissions or roles changed (which previously caused song 0 reset)!
+  const prevIndexRef = useRef(player.index);
+  const prevPlayingRef = useRef(player.playing);
+  const wasInRoomRef = useRef(room.inRoom);
+
   useEffect(() => {
-    if (!room.inRoom) return;
-    if (isRemoteUpdate.current) return;
-    if (room.isHost) {
-      room.pushPlayback();
-    } else if (room.canDrive) {
-      room.pushPlayback();
+    if (!room.inRoom) {
+      wasInRoomRef.current = false;
+      prevIndexRef.current = player.index;
+      prevPlayingRef.current = player.playing;
+      return;
     }
-  }, [player.index, player.playing, room.inRoom, room.isHost, room.canDrive, room]);
+
+    if (!wasInRoomRef.current) {
+      wasInRoomRef.current = true;
+      prevIndexRef.current = player.index;
+      prevPlayingRef.current = player.playing;
+      // Only the room creator (owner) broadcasts initial room playback on creation
+      if (room.isOwner) {
+        room.pushPlayback();
+      }
+      return;
+    }
+
+    // Ignore remote updates from other room peers
+    if (isRemoteUpdate.current) {
+      prevIndexRef.current = player.index;
+      prevPlayingRef.current = player.playing;
+      return;
+    }
+
+    const indexChanged = player.index !== prevIndexRef.current;
+    const playingChanged = player.playing !== prevPlayingRef.current;
+
+    prevIndexRef.current = player.index;
+    prevPlayingRef.current = player.playing;
+
+    // Only broadcast if the local user actually clicked play/pause or changed track
+    if (indexChanged || playingChanged) {
+      if (room.canDrive) {
+        room.pushPlayback();
+      }
+    }
+  }, [player.index, player.playing, room.inRoom, room.canDrive, room.isOwner]);
+
+  const handleSeek = useCallback((pos: number) => {
+    void pos;
+    if (room.inRoom && room.canDrive) {
+      window.setTimeout(() => {
+        room.pushPlayback();
+      }, 50);
+    }
+  }, [room.inRoom, room.canDrive, room.pushPlayback]);
 
   // Auto-open room panel on invite code
   useEffect(() => {
@@ -416,8 +505,11 @@ export default function App() {
   const urlRef = useRef<string>("");
 
   const applyBlobUrl = useCallback((url: string, item: BgItem | null) => {
-    if (urlRef.current && urlRef.current !== url) URL.revokeObjectURL(urlRef.current);
+    if (urlRef.current && urlRef.current !== url) {
+      untrackBlobUrl(urlRef.current);
+    }
     urlRef.current = url;
+    if (url) trackBlobUrl(url);
     setBgSrc(url);
     setBgItem(item);
   }, []);
@@ -442,7 +534,7 @@ export default function App() {
 
   useEffect(
     () => () => {
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      if (urlRef.current) untrackBlobUrl(urlRef.current);
     },
     []
   );
@@ -559,6 +651,16 @@ export default function App() {
     });
   }, [track, pushToast]);
 
+  /** Toggle like for any arbitrary track — used by mobile playlist screen */
+  const toggleLikeTrack = useCallback((t: import("./lib/trackModel").Track) => {
+    const isLiked = persistence.toggleLike(t.id, t);
+    setLiked((prev) => {
+      const n = new Set(prev);
+      if (isLiked) { n.add(t.id); } else { n.delete(t.id); }
+      return n;
+    });
+  }, []);
+
   const exportSettings = useCallback(() => {
     const blob = new Blob(
       [
@@ -643,6 +745,8 @@ export default function App() {
         case "T": {
           const nx = THEMES[(THEMES.findIndex((x) => x.id === themeId) + 1) % THEMES.length];
           applyTheme(nx.id);
+          update("themeId", nx.id);
+          update("customAccent", null);
           pushToast(`Theme — ${nx.name}`);
           break;
         }
@@ -680,25 +784,37 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [applyTheme, themeId, pushToast, topUpSimilar, library, useItem, view, changeView]);
 
+  const effectiveTheme = useMemo(() => {
+    if (!settings.customAccent) return theme;
+    const derived = deriveAccents(settings.customAccent);
+    return {
+      ...theme,
+      acc0: derived.acc0,
+      acc1: derived.acc1,
+      acc2: derived.acc2,
+      orbs: derived.orbs,
+    };
+  }, [theme, settings.customAccent]);
+
   const vars = useMemo(
     () =>
       ({
-        "--bg0": theme.bg0,
-        "--bg1": theme.bg1,
-        "--ink": theme.ink,
-        "--dim": theme.dim,
-        "--acc0": theme.acc0,
-        "--acc1": theme.acc1,
-        "--acc2": theme.acc2,
+        "--bg0": effectiveTheme.bg0,
+        "--bg1": effectiveTheme.bg1,
+        "--ink": effectiveTheme.ink,
+        "--dim": effectiveTheme.dim,
+        "--acc0": effectiveTheme.acc0,
+        "--acc1": effectiveTheme.acc1,
+        "--acc2": effectiveTheme.acc2,
         ...glassVars,
       }) as React.CSSProperties,
-    [theme, glassVars]
+    [effectiveTheme, glassVars]
   );
 
-  const mediaSrc = settings.bgKind === "library" ? bgSrc : settings.bgUrl;
+  const fallbackPresetUrl = "https://images.unsplash.com/photo-1499346030926-9a72daac6c63?auto=format&fit=crop&w=1200&q=60";
+  const rawMediaSrc = settings.bgKind === "library" ? bgSrc : settings.bgUrl;
+  const mediaSrc = rawMediaSrc || (settings.bgStyle === "media" && settings.bgKind === "none" ? fallbackPresetUrl : "");
   const mediaMime = settings.bgKind === "library" ? bgItem?.mime ?? "" : "";
-
-
 
   return (
     <div
@@ -706,19 +822,31 @@ export default function App() {
       className="relative flex h-[100dvh] flex-col overflow-hidden font-body text-[var(--ink)]"
     >
       {/* Background Media & Visual Layers */}
-      <MediaLayer settings={settings} theme={theme} src={mediaSrc} mime={mediaMime} />
-      <BackgroundCanvas theme={theme} style={settings.bgStyle} fx={settings.fxIntensity} />
-      <CursorGlow theme={theme} />
-      {settings.clickFx && <RippleLayer theme={theme} />}
+      <MediaLayer settings={settings} theme={effectiveTheme} src={mediaSrc} mime={mediaMime} currentTrack={track} />
+      <BackgroundCanvas
+        theme={effectiveTheme}
+        style={settings.bgStyle}
+        fx={settings.fxIntensity}
+        fxType={settings.fxType}
+        fxSpeed={settings.fxSpeed}
+        fxAudioReactive={settings.fxAudioReactive}
+        fxOnMedia={settings.fxOnMedia}
+        playing={player.playing}
+      />
+      {settings.clickFx && <RippleLayer theme={effectiveTheme} />}
 
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
+      {/* ---------------- Desktop Layout: preserved 100% untouched for >= 768px ---------------- */}
+      <div className="relative z-10 hidden md:flex h-full min-h-0 flex-col">
         {/* Top Navigation Bar */}
         <TopBar
           theme={theme}
+          customAccent={settings.customAccent}
           onTheme={(id) => {
             applyTheme(id);
             update("themeId", id);
+            update("customAccent", null);
           }}
+          onCustomAccent={(hex) => update("customAccent", hex)}
           online={online}
           onCustomize={() => setPanel(true)}
           customizeOpen={panel}
@@ -788,7 +916,7 @@ export default function App() {
                 buffered={player.buffered}
                 liked={liked.has(track?.id ?? "")}
                 onLike={toggleLike}
-                theme={theme}
+                theme={effectiveTheme}
               />
               <Controls
                 player={player}
@@ -796,6 +924,7 @@ export default function App() {
                 inRoom={room.inRoom}
                 roomPerms={effectiveRoomPerms}
                 hideTime={false}
+                onSeek={handleSeek}
               />
             </section>
 
@@ -880,11 +1009,68 @@ export default function App() {
         </footer>
       </div>
 
+      {/* ---------------- Mobile Layout: dedicated native experience for < 768px ---------------- */}
+      <div className="relative z-10 flex md:hidden h-full min-h-0 flex-col">
+        <MobileShell
+          track={track}
+          tracks={tracks}
+          player={player}
+          liked={liked}
+          onLike={toggleLike}
+          onLikeTrack={toggleLikeTrack}
+          theme={effectiveTheme}
+          settings={settings}
+          update={update}
+          reset={reset}
+          onTheme={(id) => {
+            applyTheme(id);
+            update("themeId", id);
+            update("customAccent", null);
+          }}
+          room={room}
+          weather={weather}
+          wLoading={wLoading}
+          onRefreshWeather={() => loadWeather(false)}
+          onAddTrack={addTrack}
+          onPlayEntirePlaylist={(list) => {
+            if (!list.length) return;
+            setTracks(list);
+            saveCustomTracks(list);
+            player.select(0);
+            pushToast(`Playing playlist (${list.length} tracks)`);
+          }}
+          onAddPlaylistToQueue={(list) => {
+            if (!list.length) return;
+            setTracks((prev) => {
+              const existing = new Set(prev.map((x) => x.videoId));
+              const toAdd = list.filter((x) => !existing.has(x.videoId));
+              const next = [...prev, ...toAdd];
+              saveCustomTracks(next);
+              return next;
+            });
+            pushToast(`Added ${list.length} tracks to queue`);
+          }}
+          onRemoveTrack={removeTrack}
+          onReorderTrack={handleReorder}
+          onFindSimilar={() => topUpSimilar(true)}
+          similarBusy={similarBusy}
+          onFile={onFile}
+          uploadBusy={uploadBusy}
+          maxUpload={maxUpload}
+          onToast={pushToast}
+          library={library}
+          onUseItem={useItem}
+          onDeleteItem={removeItem}
+          onClearMedia={onClearMedia}
+          onSeek={handleSeek}
+        />
+      </div>
+
       {/* ---------------- Customize Drawer (Right Sidebar) ---------------- */}
       <CustomizePanel
         open={panel}
         onClose={() => setPanel(false)}
-        theme={theme}
+        theme={effectiveTheme}
         settings={settings}
         update={update}
         reset={reset}
@@ -929,13 +1115,14 @@ export default function App() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               transition={{ type: "spring", stiffness: 320, damping: 30 }}
-              className="fixed inset-3 md:inset-8 lg:inset-12 z-[66] flex flex-col rounded-3xl border border-white/10 overflow-hidden shadow-2xl"
+              className="fixed inset-2 sm:inset-4 md:inset-8 lg:inset-x-14 lg:inset-y-8 z-[66] max-w-5xl max-h-[86vh] w-full mx-auto my-auto flex flex-col rounded-2xl md:rounded-3xl border overflow-hidden shadow-2xl"
               style={{
-                background: "linear-gradient(180deg, rgba(10,15,24,0.96), rgba(6,10,18,0.98))",
+                background: `linear-gradient(170deg, color-mix(in srgb, ${effectiveTheme.bg0} 94%, transparent), color-mix(in srgb, ${effectiveTheme.bg1} 96%, #050811))`,
+                borderColor: "var(--glass-border)",
                 backdropFilter: "blur(28px)",
               }}
             >
-              <div className="flex items-center justify-between border-b border-white/8 px-6 py-4 shrink-0">
+              <div className="flex items-center justify-between border-b border-white/8 px-5 py-3 shrink-0">
                 <div className="flex items-center gap-2.5">
                   <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--acc0)]/15 text-[var(--acc0)]">
                     <FolderMusicIcon size={16} />
@@ -945,7 +1132,7 @@ export default function App() {
                       Playlists Hub
                     </h2>
                     <p className="text-[10px] text-[var(--dim)]">
-                      Create, import, and sync playlist artwork
+                      Sync, import, and explore playlist collections
                     </p>
                   </div>
                 </div>

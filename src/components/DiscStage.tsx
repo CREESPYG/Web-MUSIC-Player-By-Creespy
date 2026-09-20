@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from "motion/react";
 import type { Track } from "../lib/trackModel";
 import type { Theme } from "../themes";
 import { beat } from "../hooks/useBeat";
-import { hexToRgba } from "../lib/color";
 import { cn } from "../utils/cn";
 import { HeartIcon } from "./Icons";
 import { YouTubeMark } from "./UiIcons";
@@ -24,6 +23,9 @@ interface Props {
 
 const R = 98;
 const C = 2 * Math.PI * R;
+
+// Pre-computed alpha lookup table to eliminate 1400+ string allocations per second
+const ALPHA_LOOKUP = Array.from({ length: 33 }, (_, i) => `rgba(255,255,255,${(i / 32).toFixed(2)})`);
 
 export function DiscStage({
   track,
@@ -57,7 +59,23 @@ export function DiscStage({
     baseThumb,
   ].filter((url, i, arr) => arr.indexOf(url) === i && url);
 
-  /* Circular audio spectrum visualizer — throttled to ~30fps, pauses on hidden tab */
+  /* Precomputed unit angles for 48 visualizer bars — eliminates 96 Math.sin/cos calls per frame */
+  const barAngles = useRef(
+    Array.from({ length: 48 }, (_, i) => {
+      const a = (i / 48) * Math.PI * 2 - Math.PI / 2;
+      return { cos: Math.cos(a), sin: Math.sin(a) };
+    })
+  ).current;
+
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const wakeRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    wakeRef.current();
+  }, [playing]);
+
+  /* Circular audio spectrum visualizer — sleeps completely when paused or hidden */
   useEffect(() => {
     const canvas = canvasRef.current;
     const box = boxRef.current;
@@ -67,32 +85,13 @@ export function DiscStage({
     if (!ctx) return;
     let raf = 0;
     let S = 0;
-    let frameCount = 0;
     let visible = !document.hidden;
 
-    /* DPR capped to 1.5 for the spectrum visualizer */
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    const N = barAngles.length;
 
-    const resize = () => {
-      S = box.clientWidth;
-      canvas.width = Math.round(S * dpr);
-      canvas.height = Math.round(S * dpr);
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(box);
-
-    /* Reduced from 64 → 48 bars — still looks full */
-    const N = 48;
-    const draw = (now: number) => {
-      // Throttle to ~30fps: skip every other frame
-      frameCount++;
-      if (frameCount % 2 !== 0) {
-        raf = requestAnimationFrame(draw);
-        return;
-      }
-
-      const b = beat.read(now);
+    const drawFrame = (now: number, isResting = false) => {
+      const b = isResting ? { bars: [] as number[], level: 0 } : beat.read(now);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, S, S);
       const cx = S / 2;
@@ -100,29 +99,65 @@ export function DiscStage({
       const r0 = S * 0.385;
 
       ctx.lineCap = "round";
+      ctx.lineWidth = 2;
       for (let i = 0; i < N; i++) {
-        const v = b.bars[Math.floor((i / N) * b.bars.length)] || 0;
-        const ang = (i / N) * Math.PI * 2 - Math.PI / 2;
+        const v = isResting ? 0.05 : b.bars[Math.floor((i / N) * 48)] || 0;
+        const { cos, sin } = barAngles[i];
         const len = 3 + v * S * 0.06;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0);
-        ctx.lineTo(cx + Math.cos(ang) * (r0 + len), cy + Math.sin(ang) * (r0 + len));
-        ctx.strokeStyle = hexToRgba("#ffffff", 0.1 + v * 0.45);
-        ctx.lineWidth = 2;
+        ctx.moveTo(cx + cos * r0, cy + sin * r0);
+        ctx.lineTo(cx + cos * (r0 + len), cy + sin * (r0 + len));
+        const alphaIdx = Math.min(32, Math.max(0, Math.round((0.1 + v * 0.45) * 32)));
+        ctx.strokeStyle = ALPHA_LOOKUP[alphaIdx];
         ctx.stroke();
       }
+    };
+
+    const resize = () => {
+      S = box.clientWidth;
+      canvas.width = Math.round(S * dpr);
+      canvas.height = Math.round(S * dpr);
+      // Draw resting state if paused
+      if (!playingRef.current) drawFrame(performance.now(), true);
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(box);
+
+    let lastDraw = 0;
+    const draw = (now: number) => {
+      if (!playingRef.current) {
+        // Render resting frame once and sleep
+        drawFrame(now, true);
+        return;
+      }
+
+      // Throttle to ~30fps
+      if (now - lastDraw < 32) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastDraw = now;
+
+      drawFrame(now, false);
       raf = requestAnimationFrame(draw);
     };
 
     const startLoop = () => {
       if (!visible) return;
-      raf = requestAnimationFrame(draw);
+      cancelAnimationFrame(raf);
+      if (playingRef.current) {
+        raf = requestAnimationFrame(draw);
+      } else {
+        drawFrame(performance.now(), true);
+      }
     };
+    wakeRef.current = startLoop;
 
     const onVisibility = () => {
       visible = !document.hidden;
       if (visible) {
-        frameCount = 0;
+        lastDraw = 0;
         startLoop();
       } else {
         cancelAnimationFrame(raf);
@@ -137,7 +172,7 @@ export function DiscStage({
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [playing]);
 
   return (
     <div className="flex min-h-0 flex-col items-center gap-4 w-full">

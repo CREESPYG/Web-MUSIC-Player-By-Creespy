@@ -79,19 +79,21 @@ input,
   background: var(--glass-bg, linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.022)));
   border: var(--bw, 1px) solid var(--glass-border, rgba(255, 255, 255, 0.1));
   border-radius: var(--radius, 26px);
-  backdrop-filter: blur(var(--blur, 22px)) saturate(1.25);
-  -webkit-backdrop-filter: blur(var(--blur, 22px)) saturate(1.25);
+  backdrop-filter: blur(var(--blur, 16px)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--blur, 16px)) saturate(1.2);
   box-shadow:
     0 18px 50px -28px rgba(0, 0, 0, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateZ(0);
 }
 
 .glass-soft {
   background: rgba(255, 255, 255, 0.04);
   border: var(--bw, 1px) solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-s, 18px);
-  backdrop-filter: blur(var(--blur, 14px));
-  -webkit-backdrop-filter: blur(var(--blur, 14px));
+  backdrop-filter: blur(var(--blur-s, 10px));
+  -webkit-backdrop-filter: blur(var(--blur-s, 10px));
+  transform: translateZ(0);
 }
 
 /* subtle top-edge sheen for depth without heavy borders */
@@ -231,4 +233,45 @@ input[type="range"].vol::-moz-range-thumb {
 }
 .scroll-slim::-webkit-scrollbar-thumb:hover {
   background: var(--acc0);
+}
+
+/* ---------- YouTube Live Video Background Layer ---------- */
+#youtube-player-container {
+  pointer-events: none !important;
+  user-select: none !important;
+  transition: opacity 0.3s ease, filter 0.25s ease;
+}
+
+#youtube-player-container.yt-hidden {
+  position: fixed !important;
+  left: -9999px !important;
+  top: 0 !important;
+  width: 200px !important;
+  height: 112px !important;
+  opacity: 0.001 !important;
+  z-index: -999 !important;
+  overflow: hidden !important;
+}
+
+#youtube-player-container.yt-live-bg {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 1 !important;
+  overflow: hidden !important;
+  opacity: 1 !important;
+}
+
+#youtube-player-container.yt-live-bg iframe {
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  width: 100vw !important;
+  height: 56.25vw !important; /* 16:9 ratio */
+  min-height: 100vh !important;
+  min-width: 177.78vh !important; /* 16:9 ratio */
+  transform: translate(-50%, -50%) scale(1.12) !important;
+  pointer-events: none !important;
+  border: none !important;
 }

@@ -49,15 +49,24 @@ export function RippleLayer({ theme }: { theme: Theme }) {
     const dpr = 1;
 
     const resize = () => {
-      w = window.innerWidth;
-      h = window.innerHeight;
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
+      // Cap backing resolution to 960x540 (stretched to 100vw x 100vh via CSS)
+      // Eliminates up to 30+ MB of GPU backing store allocation on 2K/4K displays
+      const realW = window.innerWidth;
+      const realH = window.innerHeight;
+      const scale = Math.min(1, 960 / Math.max(realW, 1), 540 / Math.max(realH, 1));
+      w = Math.round(realW * scale);
+      h = Math.round(realH * scale);
+      canvas.width = w;
+      canvas.height = h;
     };
     resize();
-    window.addEventListener("resize", resize);
+    window.addEventListener("resize", resize, { passive: true });
 
-    const splash = (x: number, y: number) => {
+    const splash = (clientX: number, clientY: number) => {
+      const scaleX = w / Math.max(window.innerWidth, 1);
+      const scaleY = h / Math.max(window.innerHeight, 1);
+      const x = clientX * scaleX;
+      const y = clientY * scaleY;
       for (let i = 0; i < 3; i++) {
         rings.push({ x, y, t: -i * 0.1, ttl: 0.85 + i * 0.18, max: 120 + i * 62, width: 2.6 - i * 0.7, bright: false });
       }
@@ -88,7 +97,7 @@ export function RippleLayer({ theme }: { theme: Theme }) {
     };
 
     const onDown = (e: PointerEvent) => splash(e.clientX, e.clientY);
-    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerdown", onDown, { passive: true });
 
     const draw = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
@@ -111,12 +120,15 @@ export function RippleLayer({ theme }: { theme: Theme }) {
         const alpha = Math.pow(1 - p, 1.7);
         ctx.beginPath();
         ctx.arc(r.x, r.y, rad, 0, Math.PI * 2);
-        ctx.strokeStyle = r.bright ? `rgba(255,255,255,${alpha * 0.9})` : hexToRgba(t.acc0, alpha * 0.75);
+        // Glow halo underlay (zero shadowBlur to avoid Blink Skia raster memory accumulation)
+        if (r.bright || alpha > 0.2) {
+          ctx.strokeStyle = hexToRgba(t.acc0, alpha * 0.25);
+          ctx.lineWidth = r.width * (1 - p * 0.6) + 4;
+          ctx.stroke();
+        }
+        ctx.strokeStyle = r.bright ? `rgba(255,255,255,${(alpha * 0.9).toFixed(2)})` : hexToRgba(t.acc0, alpha * 0.75);
         ctx.lineWidth = r.width * (1 - p * 0.6);
-        ctx.shadowColor = hexToRgba(t.acc0, alpha);
-        ctx.shadowBlur = r.bright ? 18 : 8;
         ctx.stroke();
-        ctx.shadowBlur = 0;
       }
 
       for (let i = drops.length - 1; i >= 0; i--) {

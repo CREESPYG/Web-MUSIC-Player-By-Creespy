@@ -15,10 +15,11 @@ import {
   UploadIcon,
 } from "./UiIcons";
 import { PlayIcon } from "./Icons";
-import type { BgStyle, Settings } from "../hooks/useSettings";
+import type { BgStyle, FxType, Settings } from "../hooks/useSettings";
 import { openBgItem, prettyBytes, type BgItem, type BgLibrary } from "../lib/bgStore";
 import { searchPlaces, type Place } from "../lib/weather";
 import { cn } from "../utils/cn";
+import { AccentColorPicker } from "./AccentColorPicker";
 
 interface Props {
   open: boolean;
@@ -44,13 +45,24 @@ const BG_OPTS: { v: BgStyle; label: string }[] = [
   { v: "wave", label: "Wave" },
   { v: "solid", label: "Solid" },
   { v: "media", label: "Media" },
+  { v: "live", label: "Live Video" },
+];
+
+const FX_OPTS: { v: FxType; label: string; desc: string }[] = [
+  { v: "full", label: "Full", desc: "Orbs + Waves + Stars" },
+  { v: "aurora", label: "Aurora", desc: "Northern Lights" },
+  { v: "wave", label: "Wave", desc: "Sine Ribbons" },
+  { v: "orbs", label: "Orbs", desc: "Cosmic Plasma" },
+  { v: "particles", label: "Stardust", desc: "Drifting Stars" },
+  { v: "minimal", label: "Minimal", desc: "Clean Ambient" },
 ];
 
 const PRESETS = [
-  { label: "Studio", url: "" },
+  { label: "Studio", url: "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1200&q=60" },
   { label: "Dusk", url: "https://images.unsplash.com/photo-1499346030926-9a72daac6c63?auto=format&fit=crop&w=1200&q=60" },
   { label: "Rain", url: "https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?auto=format&fit=crop&w=1200&q=60" },
   { label: "Neon", url: "https://images.unsplash.com/photo-1518972559570-7cc1309f3229?auto=format&fit=crop&w=1200&q=60" },
+  { label: "Lo-Fi", url: "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=1200&q=60" },
 ];
 
 /** Thumbnail for a library entry — videos show their real first frame. */
@@ -185,16 +197,37 @@ export function CustomizePanel({
             </div>
 
             <div className="scroll-slim min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <SectionTitle>Accent theme</SectionTitle>
-              <div className="mb-5 grid grid-cols-2 gap-2">
+              {/* Unified Accent Theme & Color Section */}
+              <div className="mb-2 flex items-center justify-between">
+                <SectionTitle>Accent Theme & Color</SectionTitle>
+                {settings.customAccent && settings.customAccent.toLowerCase() !== theme.acc0.toLowerCase() && (
+                  <button
+                    onClick={() => update("customAccent", null)}
+                    className="font-tmono text-[9.5px] uppercase tracking-wider text-[var(--dim)] hover:text-white transition-colors underline decoration-white/30 hover:decoration-white"
+                    title="Reset to pure base theme colors"
+                  >
+                    Reset default
+                  </button>
+                )}
+              </div>
+
+              {/* 4 Curated Preset Themes Grid */}
+              <div className="mb-3 grid grid-cols-2 gap-2">
                 {THEMES.map((t) => {
-                  const on = t.id === theme.id;
+                  const isCustomActive = Boolean(
+                    settings.customAccent &&
+                    settings.customAccent.toLowerCase() !== theme.acc0.toLowerCase()
+                  );
+                  const on = !isCustomActive && t.id === theme.id;
                   return (
                     <motion.button
                       key={t.id}
                       whileHover={{ y: -2 }}
                       whileTap={{ scale: 0.97 }}
-                      onClick={() => update("themeId", t.id)}
+                      onClick={() => {
+                        update("themeId", t.id);
+                        update("customAccent", null);
+                      }}
                       className="relative overflow-hidden rounded-[var(--radius-s)] border p-2.5 text-left transition-colors"
                       style={{
                         borderColor: on ? t.acc0 : "rgba(255,255,255,0.1)",
@@ -214,13 +247,62 @@ export function CustomizePanel({
                 })}
               </div>
 
+              {/* Custom Accent Studio */}
+              <div className="mb-4">
+                <AccentColorPicker
+                  color={settings.customAccent || theme.acc0}
+                  onChange={(hex) => update("customAccent", hex)}
+                />
+              </div>
+
               <div className="mb-4 h-px bg-white/8" />
 
               <SectionTitle>Glass tiles</SectionTitle>
               <SliderRow label="Border width" left="none" right="thick" min={0} max={4} step={0.5} value={settings.borderWidth} onChange={(v: number) => update("borderWidth", v)} format={(v: number) => `${v}px`} />
               <SliderRow label="Tile opacity" left="light" right="opaque" min={0.2} max={2} step={0.05} value={settings.tileOpacity} onChange={(v: number) => update("tileOpacity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
               <SliderRow label="Tile roundness" left="sharp" right="pill" min={6} max={40} value={settings.tileSize} onChange={(v: number) => update("tileSize", v)} format={(v: number) => `${v}px`} />
-              <SliderRow label="Visual FX intensity" left="calm" right="max" min={0.2} max={1.8} step={0.05} value={settings.fxIntensity} onChange={(v: number) => update("fxIntensity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
+
+              <div className="mb-4 mt-4 h-px bg-white/8" />
+
+              <SectionTitle>Visual FX</SectionTitle>
+              {/* Effect Type Pill Selector */}
+              <div className="mb-3 grid grid-cols-3 gap-1.5">
+                {FX_OPTS.map((opt) => {
+                  const on = settings.fxType === opt.v;
+                  return (
+                    <button
+                      key={opt.v}
+                      onClick={() => update("fxType", opt.v)}
+                      className={cn(
+                        "flex flex-col items-start rounded-lg border p-2 text-left transition-all",
+                        on
+                          ? "border-[var(--acc0)] bg-[var(--acc0)]/15 shadow-[0_0_12px_-4px_var(--acc0)] text-[var(--ink)]"
+                          : "border-white/10 bg-white/4 text-[var(--dim)] hover:border-white/20 hover:text-white"
+                      )}
+                    >
+                      <span className="font-display text-[11px] font-bold">{opt.label}</span>
+                      <span className="font-tmono text-[7.5px] leading-tight opacity-75">{opt.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Visual FX Controls */}
+              <SliderRow label="FX intensity" left="calm" right="max" min={0.2} max={1.8} step={0.05} value={settings.fxIntensity} onChange={(v: number) => update("fxIntensity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
+              <SliderRow label="FX animation speed" left="slow" right="fast" min={0.4} max={2.0} step={0.1} value={settings.fxSpeed} onChange={(v: number) => update("fxSpeed", v)} format={(v: number) => `${v.toFixed(1)}x`} />
+
+              <div className="mb-2.5 flex items-center justify-between">
+                <span className="text-[12.5px] font-semibold text-[var(--ink)]">Music beat reactive</span>
+                <Switch on={settings.fxAudioReactive} onChange={(v: boolean) => update("fxAudioReactive", v)} label="Music beat reactive" />
+              </div>
+
+              {(settings.bgStyle === "media" || settings.bgStyle === "live") && (
+                <div className="mb-2.5 flex items-center justify-between">
+                  <span className="text-[12.5px] font-semibold text-[var(--ink)]">Show FX over video / wallpaper</span>
+                  <Switch on={settings.fxOnMedia} onChange={(v: boolean) => update("fxOnMedia", v)} label="Show FX over video or wallpaper" />
+                </div>
+              )}
+
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-[12.5px] font-semibold text-[var(--ink)]">Mouse click ripple</span>
                 <Switch on={settings.clickFx} onChange={(v: boolean) => update("clickFx", v)} label="Mouse click ripple" />
@@ -290,7 +372,18 @@ export function CustomizePanel({
 
               <SectionTitle>Background style</SectionTitle>
               <div className="mb-3">
-                <Segmented ariaLabel="Background style" options={BG_OPTS} value={settings.bgStyle} onChange={(v: any) => update("bgStyle", v)} />
+                <Segmented
+                  ariaLabel="Background style"
+                  options={BG_OPTS}
+                  value={settings.bgStyle}
+                  onChange={(v: any) => {
+                    update("bgStyle", v);
+                    if (v === "media" && settings.bgKind === "none" && !settings.bgUrl && !library.active) {
+                      update("bgKind", "url");
+                      update("bgUrl", PRESETS[0].url);
+                    }
+                  }}
+                />
               </div>
 
               {settings.bgStyle === "media" && (
@@ -331,7 +424,7 @@ export function CustomizePanel({
 
                     {library.items.length === 0 ? (
                       <p className="rounded-[var(--radius-s)] border border-white/10 bg-white/3 px-3 py-3 text-[11.5px] leading-relaxed text-[var(--dim)]">
-                        Nothing stored yet. Upload a clip and it stays on this device — switch between your saved
+                        Nothing stored yet. Upload a clip (up to 25 MB) and it stays on this device — switch between your saved
                         wallpapers any time with one tap.
                       </p>
                     ) : (
@@ -364,6 +457,7 @@ export function CustomizePanel({
                         if (e.key === "Enter" && urlDraft.trim()) {
                           update("bgUrl", urlDraft.trim());
                           update("bgKind", "url");
+                          update("bgStyle", "media");
                           setUrlDraft("");
                         }
                       }}
@@ -375,6 +469,7 @@ export function CustomizePanel({
                         if (urlDraft.trim()) {
                           update("bgUrl", urlDraft.trim());
                           update("bgKind", "url");
+                          update("bgStyle", "media");
                           setUrlDraft("");
                         }
                       }}
@@ -397,6 +492,7 @@ export function CustomizePanel({
                           onClick={() => {
                             update("bgUrl", p.url);
                             update("bgKind", "url");
+                            update("bgStyle", "media");
                           }}
                           className="relative h-12 w-[4.5rem] overflow-hidden rounded-lg border transition-transform hover:scale-[1.04]"
                           style={{ borderColor: on ? "var(--acc0)" : "rgba(255,255,255,0.14)" }}
@@ -416,6 +512,22 @@ export function CustomizePanel({
 
                   <SliderRow label="Media blur" left="sharp" right="soft" min={0} max={40} value={settings.bgBlur} onChange={(v: number) => update("bgBlur", v)} format={(v: number) => `${v}px`} />
                   <SliderRow label="Media dim" left="bright" right="dark" min={0} max={0.9} step={0.02} value={settings.bgDim} onChange={(v: number) => update("bgDim", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
+                </motion.div>
+              )}
+
+              {settings.bgStyle === "live" && (
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-3 space-y-3">
+                  <div className="rounded-[var(--radius-s)] border border-[var(--acc0)]/30 bg-[var(--acc0)]/10 p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-[var(--acc0)] animate-pulse" />
+                      <span className="font-display text-[11px] font-bold uppercase tracking-wider text-[var(--acc0)]">Live YouTube Sync</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-[var(--dim)]">
+                      The active YouTube song plays full-bleed in the background, synchronized with the Room with zero extra audio or delay.
+                    </p>
+                  </div>
+                  <SliderRow label="Video blur" left="sharp" right="soft" min={0} max={40} value={settings.bgBlur} onChange={(v: number) => update("bgBlur", v)} format={(v: number) => `${v}px`} />
+                  <SliderRow label="Video dim" left="bright" right="dark" min={0} max={0.9} step={0.02} value={settings.bgDim} onChange={(v: number) => update("bgDim", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
                 </motion.div>
               )}
 

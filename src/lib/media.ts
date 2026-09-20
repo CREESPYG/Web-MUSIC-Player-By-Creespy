@@ -277,24 +277,54 @@ function queryFor(seed: Track): string {
   return `${base} songs mix`;
 }
 
-/** Searches YouTube via public keyless endpoints */
+// Circuit breaker: track failed endpoints so we don't spam blocked/dead servers repeatedly
+const endpointFailures = new Map<string, number>();
+const FAIL_COOLDOWN_MS = 300_000; // 5 minutes cooldown before retrying a failed host
+
+function isEndpointHealthy(urlStr: string): boolean {
+  try {
+    const host = new URL(urlStr).hostname;
+    const lastFail = endpointFailures.get(host) || 0;
+    return Date.now() - lastFail > FAIL_COOLDOWN_MS;
+  } catch {
+    return true;
+  }
+}
+
+function markEndpointFailed(urlStr: string): void {
+  try {
+    const host = new URL(urlStr).hostname;
+    endpointFailures.set(host, Date.now());
+  } catch {
+    /* noop */
+  }
+}
+
+/** Searches YouTube via public keyless endpoints with fast failure */
 export async function searchYouTube(query: string, limit = 10): Promise<Track[]> {
   const q = encodeURIComponent(query.trim());
   const known = new Set<string>();
 
-  for (const ep of SEARCH_ENDPOINTS) {
+  // Filter to healthy endpoints first
+  const candidates = SEARCH_ENDPOINTS.filter((ep) => isEndpointHealthy(ep.url(q))).slice(0, 3);
+  if (!candidates.length) candidates.push(SEARCH_ENDPOINTS[0]);
+
+  for (const ep of candidates) {
     try {
       const ctrl = new AbortController();
-      const to = window.setTimeout(() => ctrl.abort(), 4500);
+      const to = window.setTimeout(() => ctrl.abort(), 3200);
       const res = await fetch(ep.url(q), { signal: ctrl.signal });
       window.clearTimeout(to);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        markEndpointFailed(ep.url(q));
+        continue;
+      }
       const j = await res.json();
       const items: any[] = ep.kind === "piped" ? j?.items || [] : Array.isArray(j) ? j : j?.items || [];
       const out = normalize(items, ep.kind, known, "Search result", limit);
       if (out.length) return out;
     } catch {
-      /* continue */
+      markEndpointFailed(ep.url(q));
     }
   }
   return [];
@@ -302,8 +332,7 @@ export async function searchYouTube(query: string, limit = 10): Promise<Track[]>
 
 /**
  * Magic-shuffle discovery: searches YouTube directly (via keyless public
- * instances) for songs close to what's playing, then falls back to a video's
- * related streams.
+ * instances) with endpoint circuit-breaker, preventing hanging network loops.
  */
 export async function fetchSimilar(
   seedId: string,
@@ -313,34 +342,43 @@ export async function fetchSimilar(
 ): Promise<SimilarResult> {
   const known = new Set(knownIds);
 
-  // 1) direct YouTube search based on the current track
+  // 1) direct YouTube search based on the current track (try max 2 healthy endpoints)
   if (seed) {
     const q = encodeURIComponent(queryFor(seed));
-    for (const ep of SEARCH_ENDPOINTS) {
+    const searchCandidates = SEARCH_ENDPOINTS.filter((ep) => isEndpointHealthy(ep.url(q))).slice(0, 2);
+
+    for (const ep of searchCandidates) {
       try {
         const ctrl = new AbortController();
-        const to = window.setTimeout(() => ctrl.abort(), 5200);
+        const to = window.setTimeout(() => ctrl.abort(), 3200);
         const res = await fetch(ep.url(q), { signal: ctrl.signal });
         window.clearTimeout(to);
-        if (!res.ok) continue;
+        if (!res.ok) {
+          markEndpointFailed(ep.url(q));
+          continue;
+        }
         const j = await res.json();
         const items: any[] = ep.kind === "piped" ? j?.items || [] : Array.isArray(j) ? j : j?.items || [];
         const out = normalize(items, ep.kind, known, "Magic · from YouTube", limit);
         if (out.length) return { tracks: out, live: true };
       } catch {
-        /* next instance */
+        markEndpointFailed(ep.url(q));
       }
     }
   }
 
-  // 2) related-streams fallback
-  for (const ep of ENDPOINTS) {
+  // 2) related-streams fallback (try max 2 healthy endpoints)
+  const streamCandidates = ENDPOINTS.filter((ep) => isEndpointHealthy(ep.url(seedId))).slice(0, 2);
+  for (const ep of streamCandidates) {
     try {
       const ctrl = new AbortController();
-      const to = window.setTimeout(() => ctrl.abort(), 5200);
+      const to = window.setTimeout(() => ctrl.abort(), 3200);
       const res = await fetch(ep.url(seedId), { signal: ctrl.signal });
       window.clearTimeout(to);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        markEndpointFailed(ep.url(seedId));
+        continue;
+      }
       const j = await res.json();
       const items: any[] =
         ep.kind === "piped"
@@ -349,7 +387,7 @@ export async function fetchSimilar(
       const out = normalize(items, ep.kind, known, "Magic · auto-discovered", limit);
       if (out.length) return { tracks: out, live: true };
     } catch {
-      /* next instance */
+      markEndpointFailed(ep.url(seedId));
     }
   }
   return { tracks: [], live: false };

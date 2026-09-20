@@ -8,6 +8,7 @@ import {
   ClockOnlyIcon,
   HeadphonesIcon,
   FolderMusicIcon,
+  PaletteIcon,
 } from "./UiIcons";
 import { cn } from "../utils/cn";
 
@@ -15,7 +16,9 @@ export type ViewMode = "full" | "time";
 
 interface Props {
   theme: Theme;
+  customAccent?: string | null;
   onTheme: (id: string) => void;
+  onCustomAccent?: (hex: string) => void;
   online: number;
   onCustomize: () => void;
   customizeOpen: boolean;
@@ -36,7 +39,9 @@ const VIEWS: { v: ViewMode; label: string; Icon: typeof LayoutIcon }[] = [
 
 export function TopBar({
   theme,
+  customAccent,
   onTheme,
+  onCustomAccent,
   online,
   onCustomize,
   customizeOpen,
@@ -49,6 +54,13 @@ export function TopBar({
   onPlaylists,
   playlistsOpen,
 }: Props) {
+  // Check if a custom accent is currently active (distinct from the active base theme's primary color)
+  const isCustom = Boolean(
+    customAccent &&
+    !THEMES.some((t) => t.acc0.toLowerCase() === customAccent.toLowerCase())
+  );
+  const effectiveCustomHex = customAccent || theme.acc0;
+
   return (
     <header className="relative z-20 mx-auto flex w-full max-w-[1440px] shrink-0 items-center justify-between gap-3 px-3 py-2.5 md:px-6 md:py-3.5">
       {/* Brand Logo */}
@@ -106,28 +118,88 @@ export function TopBar({
           ))}
         </div>
 
-        {/* Accent Themes */}
-        <div className="glass hidden items-center gap-2.5 rounded-full p-2 md:flex" role="radiogroup" aria-label="Theme">
-          {THEMES.map((t) => (
-            <motion.button
-              key={t.id}
-              whileHover={{ scale: 1.18 }}
-              whileTap={{ scale: 0.88 }}
-              onClick={() => onTheme(t.id)}
-              title={`${t.name} — ${t.tagline}`}
-              aria-label={`${t.name} theme`}
-              className="relative grid h-7 w-7 place-items-center rounded-full"
-              style={{ background: `linear-gradient(135deg, ${t.acc0}, ${t.acc2})` }}
-            >
-              {t.id === theme.id && (
+        {/* Unified Accent Themes & Custom Color Picker */}
+        <div
+          className="glass hidden items-center gap-2 rounded-full p-1.5 md:flex"
+          role="radiogroup"
+          aria-label="Accent Themes and Custom Color"
+        >
+          {THEMES.map((t) => {
+            const isPresetActive = !isCustom && t.id === theme.id;
+            return (
+              <motion.button
+                key={t.id}
+                whileHover={{ scale: 1.16 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => onTheme(t.id)}
+                title={`${t.name} Theme — ${t.tagline}`}
+                aria-label={`${t.name} theme`}
+                className="relative grid h-7 w-7 place-items-center rounded-full transition-transform"
+                style={{ background: `linear-gradient(135deg, ${t.acc0}, ${t.acc2})` }}
+              >
+                {isPresetActive && (
+                  <motion.span
+                    layoutId="theme-ring"
+                    transition={{ type: "spring", stiffness: 420, damping: 30 }}
+                    className="absolute -inset-[3.5px] rounded-full border-2 border-white/85 shadow-[0_0_8px_rgba(255,255,255,0.4)]"
+                  />
+                )}
+              </motion.button>
+            );
+          })}
+
+          {/* Micro separator between preset themes and custom accent */}
+          <span className="h-3.5 w-px bg-white/15 mx-0.5" />
+
+          {/* Custom Accent Color Swatch / Button */}
+          <motion.button
+            whileHover={{ scale: 1.16 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={() => {
+              if (isCustom) {
+                // If custom color is already active, open Customize drawer to adjust it
+                onCustomize();
+              } else if (customAccent) {
+                // Reactivate existing custom accent
+                onCustomAccent?.(customAccent);
+              } else {
+                // Open Customize drawer so user can pick their custom color
+                onCustomize();
+              }
+            }}
+            title={
+              isCustom
+                ? `Custom Accent: ${effectiveCustomHex} (Click to customize)`
+                : "Custom Accent Studio — Click to customize"
+            }
+            aria-label="Custom Accent Color"
+            className={cn(
+              "relative grid h-7 w-7 place-items-center rounded-full transition-all",
+              isCustom
+                ? "shadow-sm"
+                : "border border-dashed border-white/30 hover:border-white/60 bg-white/5"
+            )}
+            style={
+              isCustom
+                ? {
+                    background: `linear-gradient(135deg, ${effectiveCustomHex}, color-mix(in srgb, ${effectiveCustomHex} 45%, white))`,
+                  }
+                : undefined
+            }
+          >
+            {isCustom ? (
+              <>
                 <motion.span
                   layoutId="theme-ring"
                   transition={{ type: "spring", stiffness: 420, damping: 30 }}
-                  className="absolute -inset-[3.5px] rounded-full border-2 border-white/80"
+                  className="absolute -inset-[3.5px] rounded-full border-2 border-white/90 shadow-[0_0_9px_var(--acc0)]"
                 />
-              )}
-            </motion.button>
-          ))}
+                <span className="h-1.5 w-1.5 rounded-full bg-white shadow-sm" />
+              </>
+            ) : (
+              <PaletteIcon size={13} className="text-[var(--dim)] hover:text-white" />
+            )}
+          </motion.button>
         </div>
 
         {/* Playlists Hub Button */}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Theme } from "../themes";
 
-export type BgStyle = "solid" | "dynamic" | "wave" | "media";
+export type BgStyle = "solid" | "dynamic" | "wave" | "media" | "live";
 export type BgKind = "url" | "library" | "none";
+export type FxType = "full" | "aurora" | "wave" | "orbs" | "particles" | "minimal";
 
 export interface Settings {
   themeId: string;
@@ -17,7 +18,12 @@ export interface Settings {
   borderWidth: number;
   tileOpacity: number;
   tileSize: number;
+  customAccent: string | null;
+  fxType: FxType;
   fxIntensity: number;
+  fxSpeed: number;
+  fxAudioReactive: boolean;
+  fxOnMedia: boolean;
   clickFx: boolean;
 }
 
@@ -34,13 +40,18 @@ export const DEFAULTS: Settings = {
   borderWidth: 1,
   tileOpacity: 1,
   tileSize: 26,
+  customAccent: null,
+  fxType: "full",
   fxIntensity: 1,
+  fxSpeed: 1,
+  fxAudioReactive: true,
+  fxOnMedia: true,
   clickFx: true,
 };
 
 const KEY = "ripple.settings.v1";
-const MAX_UPLOAD = 100 * 1024 * 1024;
-export const MAX_UPLOAD_LABEL = "100 MB";
+const MAX_UPLOAD = 25 * 1024 * 1024;
+export const MAX_UPLOAD_LABEL = "25 MB";
 
 export function useSettings(theme: Theme, applyTheme: (id: string) => void) {
   const [settings, setSettings] = useState<Settings>(() => {
@@ -77,7 +88,8 @@ export function useSettings(theme: Theme, applyTheme: (id: string) => void) {
       "--bw": `${settings.borderWidth}px`,
       "--radius": `${settings.tileSize}px`,
       "--radius-s": `${Math.max(8, Math.round(settings.tileSize * 0.66))}px`,
-      "--blur": `${Math.round(14 + 10 * settings.tileOpacity)}px`,
+      "--blur": `${Math.round(10 + 6 * settings.tileOpacity)}px`,
+      "--blur-s": `${Math.round(6 + 4 * settings.tileOpacity)}px`,
     }) as React.CSSProperties,
     [settings.tileOpacity, settings.borderWidth, settings.tileSize]
   );

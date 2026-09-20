@@ -92,6 +92,7 @@ export function usePresence() {
 
     const startFallback = () => {
       if (modeRef.current === "global" || disposed) return;
+      if (localTimer) window.clearInterval(localTimer);
       setMode((m) => (m === "global" ? m : "local"));
 
       const stamp = () => {

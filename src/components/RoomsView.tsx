@@ -10,7 +10,10 @@ import {
   GlobeIcon,
   LockIcon,
   SendIcon,
+  MicIcon,
+  ChatIcon,
 } from "./UiIcons";
+import { VoicePanel } from "./VoicePanel";
 
 interface RoomsViewProps {
   room: RoomApi;
@@ -22,12 +25,25 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
   onToast,
 }) => {
   const [tab, setTab] = useState<"public" | "join" | "create" | "history">("public");
+  const [inRoomTab, setInRoomTab] = useState<"voice" | "chat">("chat");
   const [joinCode, setJoinCode] = useState("");
   const [roomName, setRoomName] = useState("");
   const [roomType, setRoomType] = useState<"public" | "private">("public");
   const [chatInput, setChatInput] = useState("");
   const [copiedCode, setCopiedCode] = useState(false);
   const [history] = useState<RoomHistoryItem[]>(() => persistence.getRoomHistory());
+  const [nick, setNick] = useState(room.nickname);
+  const [editingNick, setEditingNick] = useState(false);
+  const [editingNickVal, setEditingNickVal] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setNick(room.nickname);
+  }, [room.nickname]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [room.chat]);
 
   const handleCreateRoom = (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,14 +138,54 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
           </div>
         </div>
 
-        {/* Room Grid: Live Chat & Participants */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Live Chat (2 cols) */}
-          <div className="lg:col-span-2 flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 h-[440px]">
-            <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-3">
-              <span className="text-xs font-semibold text-white">Live Room Chat</span>
-              <span className="text-[10px] text-[var(--dim)]">{room.chat.length} messages</span>
-            </div>
+        {/* In-Room Subnav Tabs */}
+        <div className="flex items-center gap-2 border-b border-white/8 pb-3">
+          <button
+            type="button"
+            onClick={() => setInRoomTab("voice")}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 font-display text-xs font-bold transition-all ${
+              inRoomTab === "voice"
+                ? "bg-[var(--acc0)] text-black shadow-md"
+                : "bg-white/5 text-[var(--dim)] hover:text-white hover:bg-white/10"
+            }`}
+          >
+            <MicIcon size={14} />
+            <span>Room Voice</span>
+            {room.voice.isInVoice && (
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setInRoomTab("chat")}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 font-display text-xs font-bold transition-all ${
+              inRoomTab === "chat"
+                ? "bg-[var(--acc0)] text-black shadow-md"
+                : "bg-white/5 text-[var(--dim)] hover:text-white hover:bg-white/10"
+            }`}
+          >
+            <ChatIcon size={14} />
+            <span>Chat & Listeners ({room.members.length})</span>
+          </button>
+        </div>
+
+        {/* VOICE TAB */}
+        {inRoomTab === "voice" && (
+          <div className="min-h-[500px]">
+            <VoicePanel room={room} onToast={onToast} isMobile={false} />
+          </div>
+        )}
+
+        {/* CHAT TAB */}
+        {inRoomTab === "chat" && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Live Chat (2 cols) */}
+            <div className="lg:col-span-2 flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 h-[440px]">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-3">
+                <span className="text-xs font-semibold text-white">Live Room Chat</span>
+                <span className="text-[10px] text-[var(--dim)]">{room.chat.length} messages</span>
+              </div>
 
             <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 text-xs">
               {room.chat.length === 0 ? (
@@ -154,6 +210,7 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                   </div>
                 ))
               )}
+              <div ref={chatEndRef} />
             </div>
 
             <form onSubmit={handleSendChat} className="mt-3 flex items-center gap-2 border-t border-white/5 pt-3">
@@ -187,23 +244,84 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
                   key={m.id}
                   className="flex items-center justify-between rounded-xl bg-white/5 p-2.5 text-xs"
                 >
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
-                    <span className="truncate font-medium text-white">{m.nickname}</span>
+                    {editingNick && m.id === room.me ? (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const clean = editingNickVal.trim();
+                          if (clean && clean !== "false") {
+                            room.updateNickname(clean);
+                            setEditingNick(false);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 flex-1 min-w-0"
+                      >
+                        <input
+                          value={editingNickVal}
+                          onChange={(e) => setEditingNickVal(e.target.value)}
+                          autoFocus
+                          maxLength={24}
+                          className="rounded border border-[var(--acc0)]/60 bg-black/50 px-2 py-0.5 text-xs text-white outline-none w-28"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded bg-[var(--acc0)] px-2 py-0.5 text-[10px] font-bold text-black hover:brightness-110"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingNick(false)}
+                          className="rounded px-1.5 py-0.5 text-[10px] text-[var(--dim)] hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate font-medium text-white">{m.nickname}</span>
+                        {m.id === room.me && (
+                          <button
+                            onClick={() => {
+                              setEditingNickVal(m.nickname);
+                              setEditingNick(true);
+                            }}
+                            title="Change your nickname"
+                            className="rounded px-1 py-0.5 text-[8px] font-mono uppercase text-[var(--dim)] hover:text-[var(--acc0)] hover:bg-white/10"
+                          >
+                            edit
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {m.role === "host" && (
-                    <span className="rounded bg-[var(--acc0)]/20 px-1.5 py-0.5 text-[9px] font-bold text-[var(--acc0)]">
-                      Host
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {m.id === room.me && (
+                      <span className="rounded bg-white/10 px-1.5 py-0.5 text-[9px] font-medium text-[var(--dim)]">
+                        You
+                      </span>
+                    )}
+                    {m.role === "owner" ? (
+                      <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 border border-amber-400/30">
+                        Host
+                      </span>
+                    ) : m.role === "host" ? (
+                      <span className="rounded bg-[var(--acc0)]/20 px-1.5 py-0.5 text-[9px] font-bold text-[var(--acc0)]">
+                        Co-Host
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
-      </div>
-    );
-  }
+      )}
+    </div>
+  );
+}
 
   // Lobby / Directory View
   return (
@@ -240,7 +358,37 @@ export const RoomsView: React.FC<RoomsViewProps> = ({
         </div>
       </div>
 
-      {/* Tab: Public Rooms */}
+      {/* Your Nickname Input Card (Always visible at top of lobby) */}
+      <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4">
+        <label className="block text-xs font-semibold text-white mb-1.5">
+          Your Listener Nickname
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={nick}
+            onChange={(e) => {
+              setNick(e.target.value);
+              const clean = e.target.value.trim();
+              if (clean && clean !== "false") {
+                room.updateNickname(clean);
+              }
+            }}
+            onBlur={() => {
+              const clean = (nick || "").trim();
+              if (clean && clean !== "false") {
+                room.updateNickname(clean);
+              } else {
+                setNick(room.nickname);
+              }
+            }}
+            placeholder="Choose a display name"
+            className="flex-1 rounded-xl border border-white/12 bg-black/30 px-3.5 py-2 text-xs text-white placeholder-[var(--dim)] outline-none focus:border-[var(--acc0)]"
+          />
+        </div>
+      </div>
+
+      {/* Tab: Public Rooms (Directly below nickname) */}
       {tab === "public" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">

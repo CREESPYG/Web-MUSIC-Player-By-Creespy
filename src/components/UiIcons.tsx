@@ -270,6 +270,36 @@ export const SunIcon = ({ size, className }: P) => (
   </svg>
 );
 
+export const MoonIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+  </svg>
+);
+
+export const CloudIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+  </svg>
+);
+
+export const RefreshIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+  </svg>
+);
+
+export const WifiIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />
+  </svg>
+);
+
+export const SignalIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8" strokeWidth={2.2} />
+  </svg>
+);
+
 export const MenuIcon = ({ size, className }: P) => (
   <svg {...svg(size)} className={className}>
     <line x1="4" y1="12" x2="20" y2="12" />
@@ -506,4 +536,44 @@ export const Segmented = ({
       </button>
     ))}
   </div>
+);
+
+export const MicIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+    <line x1="12" x2="12" y1="19" y2="22" />
+  </svg>
+);
+
+export const MicOffIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <line x1="2" x2="22" y1="2" y2="22" strokeWidth={2.2} />
+    <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
+    <path d="M5 10v2a7 7 0 0 0 12 5" />
+    <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+    <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+    <line x1="12" x2="12" y1="19" y2="22" />
+  </svg>
+);
+
+export const DeafIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <line x1="2" x2="22" y1="2" y2="22" strokeWidth={2.2} />
+    <path d="M3 14h3l4 4V6L6.5 9H3v5Z" />
+    <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03" />
+  </svg>
+);
+
+export const ShieldIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </svg>
+);
+
+export const PhoneOffIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.8 19.8 0 0 1-3.11-8.69A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
+    <line x1="2" x2="22" y1="2" y2="22" strokeWidth={2.2} />
+  </svg>
 );

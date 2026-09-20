@@ -1,7 +1,7 @@
 /**
  * Persistent background media library.
  * Blobs live in the Cache Storage API (huge quota, survives reloads) with an
- * IndexedDB fallback. Only tiny metadata lives in localStorage, so 100 MB video
+ * IndexedDB fallback. Only tiny metadata lives in localStorage, so 25 MB video
  * clips can't blow the quota. Every upload is kept as a history entry so the
  * user can jump between wallpapers instantly.
  */

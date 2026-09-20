@@ -20,6 +20,7 @@ create table if not exists public.rooms (
   control_mode     text not null default 'host_only' check (control_mode in ('host_only','shared','custom')),
   require_approval boolean not null default false,
   chat_enabled     boolean not null default true,
+  voice_enabled    boolean not null default true,
   status           text not null default 'active' check (status in ('active','closed')),
   max_participants int  not null default 20,
   created_at       timestamptz not null default now(),
@@ -31,9 +32,12 @@ create table if not exists public.room_members (
   room_id      uuid not null references public.rooms(id) on delete cascade,
   user_id      uuid not null default auth.uid(),
   nickname     text not null,
-  role         text not null default 'member' check (role in ('host','member')),
+  role         text not null default 'member' check (role in ('owner','host','member')),
   status       text not null default 'pending'
                check (status in ('pending','approved','rejected','kicked','banned','left')),
+  can_speak    boolean not null default true,
+  can_hear     boolean not null default true,
+  host_muted   boolean not null default false,
   joined_at    timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   unique (room_id, user_id)
@@ -105,7 +109,7 @@ returns boolean language sql security definer set search_path = public stable as
   select exists (
     select 1 from public.room_members m
     where m.room_id = p_room and m.user_id = auth.uid()
-      and m.role = 'host' and m.status = 'approved'
+      and m.role in ('owner', 'host') and m.status = 'approved'
   ) or exists (
     select 1 from public.rooms r where r.id = p_room and r.host_id = auth.uid()
   );
@@ -263,12 +267,90 @@ returns boolean language sql security definer set search_path = public stable as
   );
 $$;
 
+-- check if user is the true Room Owner
+create or replace function public.rm_is_owner(p_room uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (
+    select 1 from public.rooms r where r.id = p_room and r.host_id = auth.uid()
+  );
+$$;
+
+-- Owner promotes member to Co-Host (delegates permissions WITHOUT transferring ownership)
+create or replace function public.rm_promote_host(p_room uuid, p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.rm_is_owner(p_room) then
+    raise exception 'only the room owner can promote co-hosts';
+  end if;
+  if not exists (
+    select 1 from public.room_members
+    where room_id = p_room and user_id = p_user and status = 'approved'
+  ) then
+    raise exception 'target must be an approved member';
+  end if;
+
+  update public.room_members set role = 'host'
+   where room_id = p_room and user_id = p_user;
+end;
+$$;
+
+-- Owner demotes Co-Host back to Member
+create or replace function public.rm_demote_host(p_room uuid, p_user uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.rm_is_owner(p_room) then
+    raise exception 'only the room owner can demote co-hosts';
+  end if;
+  if exists (
+    select 1 from public.rooms where id = p_room and host_id = p_user
+  ) then
+    raise exception 'cannot demote the room owner';
+  end if;
+
+  update public.room_members set role = 'member'
+   where room_id = p_room and user_id = p_user;
+end;
+$$;
+
+-- Owner or Host enables / disables voice chat
+create or replace function public.rm_toggle_voice(p_room uuid, p_enabled boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.rm_is_host(p_room) then
+    raise exception 'only room hosts or owner can toggle voice';
+  end if;
+
+  update public.rooms set voice_enabled = p_enabled, updated_at = now()
+   where id = p_room;
+end;
+$$;
+
+-- Owner or Host sets voice permissions for a member
+create or replace function public.rm_set_voice_perms(p_room uuid, p_user uuid, p_can_speak boolean, p_can_hear boolean, p_host_muted boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.rm_is_host(p_room) then
+    raise exception 'only room hosts or owner can moderate voice';
+  end if;
+  -- Prevent host from restricting the Owner
+  if exists (select 1 from public.rooms where id = p_room and host_id = p_user) and not public.rm_is_owner(p_room) then
+    raise exception 'hosts cannot moderate the room owner';
+  end if;
+
+  update public.room_members
+     set can_speak = coalesce(p_can_speak, can_speak),
+         can_hear = coalesce(p_can_hear, can_hear),
+         host_muted = coalesce(p_host_muted, host_muted)
+   where room_id = p_room and user_id = p_user;
+end;
+$$;
+
 -- atomic host transfer
 create or replace function public.rm_transfer_host(p_room uuid, p_to uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if not public.rm_is_host(p_room) then
-    raise exception 'only the host can transfer ownership';
+  if not public.rm_is_owner(p_room) then
+    raise exception 'only the owner can transfer ownership';
   end if;
   if not exists (
     select 1 from public.room_members
@@ -286,7 +368,7 @@ begin
 end;
 $$;
 
--- atomic kick / ban
+-- atomic kick / ban (protects Room Owner from removal)
 create or replace function public.rm_kick(p_room uuid, p_user uuid, p_ban boolean)
 returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -296,6 +378,11 @@ begin
   if p_user = auth.uid() then
     raise exception 'cannot remove yourself';
   end if;
+  -- HARD INVARIANT: Owner cannot be kicked
+  if exists (select 1 from public.rooms where id = p_room and host_id = p_user) then
+    raise exception 'room owner cannot be removed';
+  end if;
+
   update public.room_members
      set status = case when p_ban then 'banned' else 'kicked' end
    where room_id = p_room and user_id = p_user;

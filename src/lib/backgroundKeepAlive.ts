@@ -7,8 +7,8 @@
  * 3. Silent HTML5 Audio Loop — prevents browser from marking page as inactive
  * 4. Web Worker Timer — unthrottled 4 s ticks for presence / WebRTC heartbeats
  *
- * Also exposes `onSupabaseCheck()` — a per-tick callback the caller uses to
- * force-reconnect the Supabase Realtime WebSocket when it goes CLOSED in background.
+ * Also exposes `onRealtimeCheck()` — a per-tick callback the caller uses to
+ * force-reconnect local realtime channels when they go CLOSED in background.
  */
 
 function generateSilentWavDataUri(): string {
@@ -41,7 +41,7 @@ class BackgroundKeepAliveService {
   private audioEl: HTMLAudioElement | null = null;
   private worker: Worker | null = null;
   private tickListeners = new Set<() => void>();
-  private supabaseChecks = new Set<() => void>();
+  private realtimeChecks = new Set<() => void>();
   private activeCount = 0;
   private isRunning = false;
   private silentUri: string | null = null;
@@ -88,15 +88,19 @@ class BackgroundKeepAliveService {
   }
 
   /**
-   * Register a Supabase connection watchdog.
+   * Register a realtime connection watchdog.
    * Called on every Worker tick BEFORE tick listeners.
-   * Caller should check supabase.realtime and call connect() if closed.
+   * Caller should check its channels and call subscribe() if closed.
    */
-  public onSupabaseCheck(cb: () => void): () => void {
-    this.supabaseChecks.add(cb);
+  public onRealtimeCheck(cb: () => void): () => void {
+    this.realtimeChecks.add(cb);
     return () => {
-      this.supabaseChecks.delete(cb);
+      this.realtimeChecks.delete(cb);
     };
+  }
+
+  public onSupabaseCheck(cb: () => void): () => void {
+    return this.onRealtimeCheck(cb);
   }
 
   /** Must be called from a user-gesture handler to unblock audio autoplay */
@@ -146,13 +150,14 @@ class BackgroundKeepAliveService {
         const el = document.createElement("audio");
         el.loop = true;
         el.src = this.silentUri;
-        el.volume = 0.001;
+        el.volume = 0.01;
         (el as any).playsInline = true;
         el.style.cssText = "position:fixed;width:1px;height:1px;opacity:0.001;pointer-events:none;left:-9999px;bottom:0;";
         document.body.appendChild(el);
         this.audioEl = el;
       }
-      this.audioEl?.play().catch(() => {});
+      const p = this.audioEl?.play();
+      if (p !== undefined) p.catch(() => {});
     } catch {}
 
     // 4. Web Worker unthrottled timer — 4 s ticks
@@ -169,8 +174,8 @@ class BackgroundKeepAliveService {
       URL.revokeObjectURL(url);
       w.onmessage = (e) => {
         if (e.data !== "tick") return;
-        // Watchdog: check Supabase connection first
-        this.supabaseChecks.forEach((fn) => {
+        // Watchdog: check connection first
+        this.realtimeChecks.forEach((fn) => {
           try {
             fn();
           } catch {}

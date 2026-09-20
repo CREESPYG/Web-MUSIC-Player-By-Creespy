@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { RealtimeChannel } from "@supabase/supabase-js";
-import { supabase, PRESENCE_ROOM } from "../lib/supabase";
+import type { RealtimeChannel } from "../lib/realtime";
+import { supabase, PRESENCE_ROOM } from "../lib/realtime";
 
 export type PresenceMode = "global" | "local" | "connecting";
 
@@ -13,16 +13,11 @@ export interface Peer {
 }
 
 /**
- * Accurate live-user tracking via Supabase Realtime Presence.
+ * Local live-user tracking (no backend).
  *
- * Each open tab joins a shared presence channel with a unique key; Supabase
- * keeps an authoritative roster synced across every connected device and emits
- * join/leave/sync events. `online` therefore reflects real, currently-connected
- * visitors everywhere — not tabs in one browser, not a simulated number.
- *
- * If the realtime socket can't be reached, it falls back to counting this
- * browser's open tabs via localStorage + BroadcastChannel so the number is
- * still real, just local.
+ * Each open tab joins a shared local presence channel with a unique key; a
+ * BroadcastChannel + localStorage roster keeps tabs of this browser in sync.
+ * `online` therefore reflects real, currently-open tabs in this browser.
  */
 const TTL_MS = 15000;
 const LOCAL_KEY = "ripple.local-presence.v4";
@@ -61,8 +56,8 @@ export function usePresence() {
   const me = useRef(tabId());
   const hue = useRef(Math.floor(Math.random() * 360));
   const [peers, setPeers] = useState<Peer[]>([]);
-  const [mode, setMode] = useState<PresenceMode>("connecting");
-  const modeRef = useRef<PresenceMode>("connecting");
+  const [mode, setMode] = useState<PresenceMode>("local");
+  const modeRef = useRef<PresenceMode>("local");
   modeRef.current = mode;
 
   useEffect(() => {
@@ -70,10 +65,9 @@ export function usePresence() {
     let channel: RealtimeChannel | null = null;
     let localCh: BroadcastChannel | null = null;
     let localTimer = 0;
-    let fallbackTimer = 0;
     const where = `tab-${me.current.slice(-3)}`;
 
-    /* ---------------- Supabase realtime presence ---------------- */
+    /* ---------------- local realtime presence ---------------- */
     const buildFromState = (state: Record<string, any[]>) => {
       const list: Peer[] = [];
       Object.entries(state).forEach(([key, metas]) => {
@@ -90,10 +84,9 @@ export function usePresence() {
       setPeers(list);
     };
 
-    const startFallback = () => {
-      if (modeRef.current === "global" || disposed) return;
-      if (localTimer) window.clearInterval(localTimer);
-      setMode((m) => (m === "global" ? m : "local"));
+    const startLocal = () => {
+      if (disposed) return;
+      setMode("local");
 
       const stamp = () => {
         const map = readLocal();
@@ -103,13 +96,11 @@ export function usePresence() {
         });
         map[me.current] = { id: me.current, at: now, hue: hue.current, where, mine: true };
         writeLocal(map);
-        if (modeRef.current !== "global") {
-          setPeers(
-            Object.values(map)
-              .map((p) => ({ ...p, mine: p.id === me.current }))
-              .sort((a, b) => (a.mine ? -1 : b.mine ? 1 : a.id.localeCompare(b.id)))
-          );
-        }
+        setPeers(
+          Object.values(map)
+            .map((p) => ({ ...p, mine: p.id === me.current }))
+            .sort((a, b) => (a.mine ? -1 : b.mine ? 1 : a.id.localeCompare(b.id)))
+        );
       };
 
       try {
@@ -146,7 +137,7 @@ export function usePresence() {
         .subscribe(async (status) => {
           if (disposed) return;
           if (status === "SUBSCRIBED") {
-            setMode("global");
+            setMode("local");
             if (localTimer) window.clearInterval(localTimer);
             try {
               localCh?.close();
@@ -154,17 +145,14 @@ export function usePresence() {
               /* noop */
             }
             await channel!.track({ hue: hue.current, where, at: Date.now() });
-          } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-            startFallback();
           }
         });
 
-      // if realtime hasn't connected shortly, show local count meanwhile
-      fallbackTimer = window.setTimeout(() => {
-        if (modeRef.current !== "global") startFallback();
-      }, 3500);
+      // If the local channel hasn't produced a roster shortly, fall back to the
+      // pure localStorage + BroadcastChannel counter.
+      startLocal();
     } catch {
-      startFallback();
+      startLocal();
     }
 
     /* ---- clean exit ---- */
@@ -187,7 +175,6 @@ export function usePresence() {
 
     return () => {
       disposed = true;
-      window.clearTimeout(fallbackTimer);
       window.clearInterval(localTimer);
       window.removeEventListener("pagehide", bye);
       window.removeEventListener("beforeunload", bye);

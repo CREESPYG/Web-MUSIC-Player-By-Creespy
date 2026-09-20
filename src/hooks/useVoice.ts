@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel } from "../lib/realtime";
 import { WebRtcVoiceManager } from "../lib/webrtc";
 import { backgroundKeepAlive } from "../lib/backgroundKeepAlive";
 import type { Member, MemberRole, VoiceParticipant } from "../lib/room";
@@ -86,6 +86,7 @@ export function useVoice({
   const boundChannelRef = useRef<RealtimeChannel | null>(null);
   const voiceUsersRef = useRef(voiceUsers);
   voiceUsersRef.current = voiceUsers;
+  const voiceKeepAliveReleaseRef = useRef<(() => void) | null>(null);
 
   const isOwner = myRole === "owner";
   const isHostOrOwner = myRole === "owner" || myRole === "host";
@@ -128,6 +129,10 @@ export function useVoice({
     if (rtcRef.current) {
       rtcRef.current.destroy();
       rtcRef.current = null;
+    }
+    if (voiceKeepAliveReleaseRef.current) {
+      voiceKeepAliveReleaseRef.current();
+      voiceKeepAliveReleaseRef.current = null;
     }
     sendVoiceBroadcast("voice_leave", { userId: myUserId });
     setVoiceUsers((prev) => {
@@ -190,6 +195,9 @@ export function useVoice({
 
     try {
       await mgr.startMicrophone(selectedInput || undefined);
+      if (!voiceKeepAliveReleaseRef.current) {
+        voiceKeepAliveReleaseRef.current = backgroundKeepAlive.acquire();
+      }
       setStatus("connected");
       onToast("Connected to Voice Channel");
       notifyVoiceEvent("Voice Chat", "Connected to Voice Channel");
@@ -700,8 +708,7 @@ export function useVoice({
             const badState =
               !pc ||
               pc.connectionState === "failed" ||
-              pc.connectionState === "closed" ||
-              pc.connectionState === "disconnected";
+              pc.connectionState === "closed";
             if (badState) {
               const shouldOffer = myUserId > p.userId;
               rtcRef.current?.connectToPeer(p.userId, shouldOffer);
@@ -729,6 +736,10 @@ export function useVoice({
     return () => {
       missingTimerRef.current.forEach((t) => window.clearTimeout(t));
       missingTimerRef.current.clear();
+      if (voiceKeepAliveReleaseRef.current) {
+        voiceKeepAliveReleaseRef.current();
+        voiceKeepAliveReleaseRef.current = null;
+      }
       if (rtcRef.current) {
         rtcRef.current.destroy();
         rtcRef.current = null;

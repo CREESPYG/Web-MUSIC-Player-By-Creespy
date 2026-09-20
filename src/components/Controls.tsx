@@ -59,7 +59,7 @@ export function Controls({
   const formattedDuration = fmtTime(duration);
 
   const toggleCls = (on: boolean) =>
-    cn(sideBtn, on && "text-[var(--acc0)] [filter:drop-shadow(0_0_7px_var(--acc0))] hover:text-[var(--acc0)]");
+    cn(sideBtn, on && "bg-[var(--acc0)]/15 text-[var(--acc0)] hover:text-[var(--acc0)]");
 
   // Granular permission helpers
   const canPlayPause = !inRoom || !roomPerms || roomPerms.play_pause;
@@ -114,14 +114,13 @@ export function Controls({
               className="absolute top-1/2 h-[5px] -translate-y-1/2 rounded-full"
               style={{
                 width: `${frac * 100}%`,
-                background: "linear-gradient(90deg, var(--acc0), var(--acc1))",
-                boxShadow: "0 0 12px var(--acc0)",
+                background: "var(--acc0)",
               }}
             />
             <div
               className={cn(
-                "absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[var(--acc0)] bg-white shadow-[0_0_10px_var(--acc0)] transition-opacity",
-                scrub !== null ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                "absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--acc0)] shadow-sm transition-transform",
+                scrub !== null ? "scale-125" : "scale-100 group-hover:scale-110"
               )}
               style={{ left: `${frac * 100}%` }}
             />
@@ -191,8 +190,7 @@ export function Controls({
             <ShuffleIcon size={19} />
             {player.shuffleMode === "magic" && (
               <span
-                className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg0)]"
-                style={{ background: "var(--acc2)", boxShadow: "0 0 8px var(--acc2)" }}
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--acc0)]"
               />
             )}
           </motion.button>
@@ -209,41 +207,36 @@ export function Controls({
             <PrevIcon size={22} />
           </motion.button>
 
-          {/* Large Glowing Play / Pause */}
-          <span className="relative mx-1 grid h-[74px] w-[74px] place-items-center">
-            <span
-              className={`absolute inset-0 rounded-full blur-2xl ${player.playing ? "glow-breathe" : "opacity-30"}`}
-              style={{ background: "var(--acc0)" }}
-            />
+          {/* Flat Nordic Material 3 FAB Play / Pause */}
+          <div className="relative mx-1.5 flex items-center justify-center">
             <motion.button
-              whileHover={canPlayPause ? { scale: 1.06 } : {}}
-              whileTap={canPlayPause ? { scale: 0.9 } : {}}
+              whileHover={canPlayPause ? { scale: 1.04 } : {}}
+              whileTap={canPlayPause ? { scale: 0.94 } : {}}
               onClick={canPlayPause ? player.toggle : undefined}
               aria-label={player.playing ? "Pause" : "Play"}
               title={!canPlayPause ? "Host controls playback" : undefined}
               className={cn(
-                "relative grid h-full w-full place-items-center rounded-full border border-white/25 text-black shadow-lg",
+                "relative grid h-16 w-16 place-items-center rounded-full text-[#0d151c] shadow-sm transition-transform",
                 !canPlayPause && "cursor-not-allowed opacity-50"
               )}
               style={{
-                background: "linear-gradient(145deg, var(--acc0), var(--acc1))",
-                boxShadow: "0 12px 34px -8px var(--acc0), inset 0 1px 0 rgba(255,255,255,0.5)",
+                backgroundColor: "var(--acc0)",
               }}
             >
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
                   key={player.playing ? "pause" : "play"}
-                  initial={{ scale: 0.4, opacity: 0, rotate: -30 }}
-                  animate={{ scale: 1, opacity: 1, rotate: 0 }}
-                  exit={{ scale: 0.4, opacity: 0, rotate: 30 }}
-                  transition={{ duration: 0.18 }}
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.5, opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   className="grid place-items-center"
                 >
-                  {player.playing ? <PauseIcon size={30} /> : <PlayIcon size={30} className="ml-1" />}
+                  {player.playing ? <PauseIcon size={28} /> : <PlayIcon size={28} className="ml-0.5" />}
                 </motion.span>
               </AnimatePresence>
             </motion.button>
-          </span>
+          </div>
 
           <motion.button
             whileTap={{ scale: 0.88 }}

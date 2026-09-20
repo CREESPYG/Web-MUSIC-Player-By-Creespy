@@ -5,7 +5,8 @@ import type { Theme } from "../themes";
 import { beat } from "../hooks/useBeat";
 import { cn } from "../utils/cn";
 import { HeartIcon } from "./Icons";
-import { YouTubeMark } from "./UiIcons";
+import { YouTubeMark, LyricsIcon, MicIcon } from "./UiIcons";
+import { useAudioCapture } from "../hooks/useAudioCapture";
 
 interface Props {
   track: Track;
@@ -19,13 +20,12 @@ interface Props {
   onLike: () => void;
   theme: Theme;
   size?: "md" | "lg";
+  onToggleLyrics?: () => void;
+  showLyrics?: boolean;
 }
 
 const R = 98;
 const C = 2 * Math.PI * R;
-
-// Pre-computed alpha lookup table to eliminate 1400+ string allocations per second
-const ALPHA_LOOKUP = Array.from({ length: 33 }, (_, i) => `rgba(255,255,255,${(i / 32).toFixed(2)})`);
 
 export function DiscStage({
   track,
@@ -37,8 +37,12 @@ export function DiscStage({
   buffered,
   liked,
   onLike,
+  theme,
   size = "lg",
+  onToggleLyrics,
+  showLyrics = false,
 }: Props) {
+  const { capturing, toggleCapture } = useAudioCapture();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [burst, setBurst] = useState(0);
@@ -59,10 +63,10 @@ export function DiscStage({
     baseThumb,
   ].filter((url, i, arr) => arr.indexOf(url) === i && url);
 
-  /* Precomputed unit angles for 48 visualizer bars — eliminates 96 Math.sin/cos calls per frame */
+  /* Precomputed unit angles for 64 visualizer bars — eliminates Math.sin/cos calls per frame */
   const barAngles = useRef(
-    Array.from({ length: 48 }, (_, i) => {
-      const a = (i / 48) * Math.PI * 2 - Math.PI / 2;
+    Array.from({ length: 64 }, (_, i) => {
+      const a = (i / 64) * Math.PI * 2 - Math.PI / 2;
       return { cos: Math.cos(a), sin: Math.sin(a) };
     })
   ).current;
@@ -91,26 +95,64 @@ export function DiscStage({
     const N = barAngles.length;
 
     const drawFrame = (now: number, isResting = false) => {
-      const b = isResting ? { bars: [] as number[], level: 0 } : beat.read(now);
+      const b = isResting ? { bars: [] as any, level: 0, bass: 0, pulse: 0 } : beat.read(now);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, S, S);
       const cx = S / 2;
       const cy = S / 2;
-      const r0 = S * 0.385;
+      const r0 = S * 0.388; // outer rim of disc
 
-      ctx.lineCap = "round";
-      ctx.lineWidth = 2;
-      for (let i = 0; i < N; i++) {
-        const v = isResting ? 0.05 : b.bars[Math.floor((i / N) * 48)] || 0;
-        const { cos, sin } = barAngles[i];
-        const len = 3 + v * S * 0.06;
+      // 1. Dynamic Bass Shockwave Ring on kicks
+      if (!isResting && b.bass > 0.3) {
+        const shockR = r0 + b.bass * (S * 0.08);
         ctx.beginPath();
-        ctx.moveTo(cx + cos * r0, cy + sin * r0);
-        ctx.lineTo(cx + cos * (r0 + len), cy + sin * (r0 + len));
-        const alphaIdx = Math.min(32, Math.max(0, Math.round((0.1 + v * 0.45) * 32)));
-        ctx.strokeStyle = ALPHA_LOOKUP[alphaIdx];
+        ctx.arc(cx, cy, shockR, 0, Math.PI * 2);
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = theme.acc0;
+        ctx.globalAlpha = Math.min(0.55, b.bass * 0.6);
         ctx.stroke();
+        ctx.globalAlpha = 1.0;
       }
+
+      // 2. High-Energy 64-Band Material You Spectrum Halo
+      ctx.lineCap = "round";
+      const lineWidth = Math.max(2.4, S * 0.011);
+      ctx.lineWidth = lineWidth;
+
+      for (let i = 0; i < N; i++) {
+        const v = isResting ? 0.06 : b.bars[i] || 0;
+        const { cos, sin } = barAngles[i];
+        // Dynamic amplitude scaling: reactive to bass, volume & transients
+        const len = 4 + Math.pow(v, 1.15) * (S * 0.16);
+
+        const x1 = cx + cos * r0;
+        const y1 = cy + sin * r0;
+        const x2 = cx + cos * (r0 + len);
+        const y2 = cy + sin * (r0 + len);
+
+        // Material You dynamic theme gradient
+        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+        const alpha = isResting ? 0.25 : Math.min(1.0, 0.45 + v * 0.55);
+        grad.addColorStop(0, theme.acc0);
+        grad.addColorStop(0.65, theme.acc1);
+        grad.addColorStop(1, theme.acc2);
+
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Glowing spark tip on strong transients
+        if (!isResting && v > 0.42) {
+          ctx.beginPath();
+          ctx.arc(x2, y2, Math.min(2.5, lineWidth * 0.65), 0, Math.PI * 2);
+          ctx.fillStyle = "#ffffff";
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1.0;
     };
 
     const resize = () => {
@@ -132,8 +174,8 @@ export function DiscStage({
         return;
       }
 
-      // Throttle to ~30fps
-      if (now - lastDraw < 32) {
+      // Smooth 60fps rendering
+      if (now - lastDraw < 15) {
         raf = requestAnimationFrame(draw);
         return;
       }
@@ -316,20 +358,64 @@ export function DiscStage({
           </AnimatePresence>
         </div>
 
-        <div className="relative shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onToggleLyrics && (
+            <motion.button
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.88 }}
+              onClick={onToggleLyrics}
+              title={showLyrics ? "Switch to Vinyl Disc" : "Show Synchronized Lyrics (LRCLIB)"}
+              aria-label="Toggle Lyrics"
+              aria-pressed={showLyrics}
+              className={cn(
+                "glass-soft grid h-10 w-10 place-items-center rounded-full transition-all",
+                showLyrics
+                  ? "bg-[var(--acc0)]/20 text-[var(--acc0)] border border-[var(--acc0)]/40 shadow-sm"
+                  : "text-[var(--dim)] hover:text-white"
+              )}
+            >
+              <LyricsIcon size={17} />
+            </motion.button>
+          )}
+
+          {/* Real Audio / Mic capture toggle for 100% hardware visualizer */}
           <motion.button
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
-            onClick={() => {
-              if (!liked) setBurst((b) => b + 1);
-              onLike();
-            }}
-            aria-label="Favorite track"
-            aria-pressed={liked}
-            className="glass-soft grid h-10 w-10 place-items-center rounded-full transition-shadow hover:shadow-[0_0_15px_var(--acc0)]"
+            onClick={toggleCapture}
+            title={
+              capturing
+                ? "Hardware Audio Mode Active (Click to disconnect)"
+                : "Connect System / Mic Audio for Realtime FFT Visualizer"
+            }
+            aria-label="Toggle Hardware Audio Capture"
+            className={cn(
+              "glass-soft grid h-10 w-10 place-items-center rounded-full transition-all relative",
+              capturing
+                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-400/40 shadow-sm"
+                : "text-[var(--dim)] hover:text-white"
+            )}
           >
-            <HeartIcon filled={liked} size={18} />
+            <MicIcon size={17} />
+            {capturing && (
+              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+            )}
           </motion.button>
+
+          <div className="relative shrink-0">
+            <motion.button
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.88 }}
+              onClick={() => {
+                if (!liked) setBurst((b) => b + 1);
+                onLike();
+              }}
+              aria-label="Favorite track"
+              aria-pressed={liked}
+              className="glass-soft grid h-10 w-10 place-items-center rounded-full transition-colors hover:text-white shadow-sm"
+            >
+              <HeartIcon filled={liked} size={18} />
+            </motion.button>
 
           {burst > 0 && (
             <motion.span
@@ -342,6 +428,7 @@ export function DiscStage({
               <HeartIcon filled size={18} />
             </motion.span>
           )}
+          </div>
         </div>
       </div>
     </div>

@@ -58,6 +58,14 @@ export const UploadIcon = ({ size, className }: P) => (
   </svg>
 );
 
+export const LyricsIcon = ({ size, className }: P) => (
+  <svg {...svg(size)} className={className}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <line x1="8" y1="8" x2="16" y2="8" strokeWidth={1.6} />
+    <line x1="8" y1="12" x2="14" y2="12" strokeWidth={1.6} />
+  </svg>
+);
+
 export const ImageIcon = ({ size, className }: P) => (
   <svg {...svg(size)} className={className}>
     <rect x="3" y="5" width="18" height="14" rx="2.4" />

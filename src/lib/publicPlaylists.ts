@@ -1,15 +1,14 @@
 /**
  * Public Playlists Service
  * ========================
- * Syncs public playlists to Supabase so they are visible to ALL users worldwide.
- * Private playlists remain local (localStorage only).
+ * Syncs public playlists to the local browser (localStorage) so they are
+ * visible across all open tabs of this browser. Private playlists also remain
+ * local (localStorage only).
  *
- * Table: public.public_playlists
- * - Readable by everyone (anon key, no auth required)
- * - Writable by owner_uid match (browser localStorage uid)
+ * No backend is used: publish / unpublish / play-count / likes all live in
+ * localStorage, with a BroadcastChannel keeping open tabs in sync.
  */
 
-import { supabase } from "./supabase";
 import { userId } from "./room";
 import type { CustomPlaylist } from "./persistence";
 
@@ -27,99 +26,110 @@ export interface PublicPlaylistRow {
   updated_at: string;
 }
 
-/** Fetch all public playlists from Supabase (global, from any user) */
-export async function fetchGlobalPublicPlaylists(): Promise<CustomPlaylist[]> {
-  const { data, error } = await supabase
-    .from("public_playlists")
-    .select("*")
-    .order("updated_at", { ascending: false })
-    .limit(100);
+const CHANNEL_KEY = "ripple.public_playlists.v2";
 
-  if (error) {
-    console.warn("[publicPlaylists] fetch error:", error.message);
-    return [];
+function notify(): void {
+  try {
+    new BroadcastChannel(CHANNEL_KEY)?.postMessage("changed");
+  } catch {
+    // ignore
   }
-
-  return (data ?? []).map(rowToPlaylist);
 }
 
-/** Publish or update a single playlist in Supabase (upsert) */
+/** Fetch all public playlists stored in this browser (any tab) */
+export async function fetchGlobalPublicPlaylists(): Promise<CustomPlaylist[]> {
+  try {
+    const res = await fetch('/api/playlists');
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return rows.map(rowToPlaylist);
+  } catch {
+    return [];
+  }
+}
+
+/** Publish or update a single playlist (upsert) */
 export async function publishPlaylist(playlist: CustomPlaylist): Promise<boolean> {
   const uid = userId();
-  const { error } = await supabase.from("public_playlists").upsert(
-    {
-      id: playlist.id,
-      owner_uid: uid,
-      title: playlist.title,
-      description: playlist.description || "",
-      cover_art: playlist.coverArt || playlist.cover || null,
-      track_count: playlist.tracks.length,
-      tracks: playlist.tracks,
-      author: playlist.author || "Anonymous",
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "id" }
-  );
-
-  if (error) {
-    console.warn("[publicPlaylists] publish error:", error.message);
+  try {
+    const res = await fetch('/api/playlists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: playlist.id,
+        owner_uid: uid,
+        title: playlist.title,
+        description: playlist.description,
+        cover_art: playlist.coverArt || playlist.cover,
+        tracks: playlist.tracks,
+        author: playlist.author,
+        track_count: playlist.tracks.length
+      })
+    });
+    if (res.ok) {
+      notify();
+      return true;
+    }
+    return false;
+  } catch {
     return false;
   }
-  return true;
 }
 
 /** Remove a playlist from the global directory (only owner can do this) */
 export async function unpublishPlaylist(playlistId: string): Promise<boolean> {
-  const { error } = await supabase
-    .from("public_playlists")
-    .delete()
-    .eq("id", playlistId)
-    .eq("owner_uid", userId());
-
-  if (error) {
-    console.warn("[publicPlaylists] unpublish error:", error.message);
+  try {
+    const res = await fetch(`/api/playlists?id=${playlistId}&owner=${userId()}`, { method: 'DELETE' });
+    if (res.ok) {
+      notify();
+      return true;
+    }
+    return false;
+  } catch {
     return false;
   }
-  return true;
 }
 
 /** Increment play count for a public playlist */
 export async function incrementPlayCount(playlistId: string): Promise<void> {
   try {
-    await supabase.rpc("increment_playlist_plays", { playlist_id: playlistId });
-  } catch {
-    // ignore play count errors
-  }
+    await fetch(`/api/playlists?id=${playlistId}&action=play`, { method: 'PATCH' });
+  } catch {}
 }
 
-/** Subscribe to real-time changes in the public playlists table */
+/** Subscribe to changes in the public playlists directory (local BroadcastChannel) */
 export function subscribeToPublicPlaylists(
   onUpdate: (playlists: CustomPlaylist[]) => void
 ): () => void {
-  const channel = supabase
-    .channel("public_playlists_changes")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "public_playlists" },
-      async () => {
-        const updated = await fetchGlobalPublicPlaylists();
-        onUpdate(updated);
-      }
-    )
-    .subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        console.log("[publicPlaylists] realtime subscribed");
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        console.warn("[publicPlaylists] realtime subscription failed:", status);
-      }
-    });
+  let bc: BroadcastChannel | null = null;
+  const handler = async () => {
+    const updated = await fetchGlobalPublicPlaylists();
+    onUpdate(updated);
+  };
+
+  try {
+    bc = new BroadcastChannel(CHANNEL_KEY);
+    bc.onmessage = (e) => {
+      if (e.data === "changed") handler();
+    };
+  } catch {
+    bc = null;
+  }
 
   return () => {
-    supabase.removeChannel(channel);
+    try {
+      bc?.close();
+    } catch {}
   };
 }
 
 function rowToPlaylist(row: PublicPlaylistRow): CustomPlaylist {
+  let parsedTracks = [];
+  try {
+    parsedTracks = typeof row.tracks === 'string' ? JSON.parse(row.tracks) : row.tracks;
+  } catch {}
+  if (!Array.isArray(parsedTracks)) parsedTracks = [];
+
   return {
     id: row.id,
     title: row.title,
@@ -127,7 +137,7 @@ function rowToPlaylist(row: PublicPlaylistRow): CustomPlaylist {
     isPublic: true,
     cover: row.cover_art || undefined,
     coverArt: row.cover_art || undefined,
-    tracks: Array.isArray(row.tracks) ? row.tracks : [],
+    tracks: parsedTracks,
     author: row.author || "Anonymous",
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),

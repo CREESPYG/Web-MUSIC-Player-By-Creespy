@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DiscStage } from "../../DiscStage";
+import { LyricsView } from "../../LyricsView";
 import type { Track } from "../../../lib/trackModel";
 import type { Theme } from "../../../themes";
 import type { PlayerApi } from "../../Controls";
@@ -45,6 +46,7 @@ export function MobilePlayerScreen({
   onSeek,
 }: Props) {
   const [showSleepModal, setShowSleepModal] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
   const toastFn = onToast || (() => {});
   const { sleepSeconds, formatted: formattedSleep, isEndTrack, setTimer, cancelTimer } = useSleepTimer(player, toastFn);
   if (!track) {
@@ -64,22 +66,37 @@ export function MobilePlayerScreen({
 
   return (
     <div className="scroll-slim flex h-full flex-col justify-between overflow-y-auto px-4 py-3">
-      {/* 1. Disc Stage (Vinyl + Audio Beat Spectrum + Track Title + Like) */}
+      {/* 1. Disc Stage or Lyrics */}
       <div className="flex shrink-0 items-center justify-center pt-1">
-        <div className="w-full max-w-[290px]">
-          <DiscStage
-            track={track}
-            playing={player.playing}
-            buffering={player.buffering}
-            ready={player.ready}
-            time={player.time}
-            duration={player.duration}
-            buffered={player.buffered}
-            liked={liked}
-            onLike={onLike}
-            theme={theme}
-            size="md"
-          />
+        <div className="w-full max-w-[310px]">
+          {showLyrics ? (
+            <div className="h-[310px] w-full">
+              <LyricsView
+                track={track}
+                currentTime={player.time}
+                duration={player.duration}
+                theme={theme}
+                onSeek={onSeek}
+                onClose={() => setShowLyrics(false)}
+              />
+            </div>
+          ) : (
+            <DiscStage
+              track={track}
+              playing={player.playing}
+              buffering={player.buffering}
+              ready={player.ready}
+              time={player.time}
+              duration={player.duration}
+              buffered={player.buffered}
+              liked={liked}
+              onLike={onLike}
+              theme={theme}
+              size="md"
+              onToggleLyrics={() => setShowLyrics(true)}
+              showLyrics={showLyrics}
+            />
+          )}
         </div>
       </div>
 

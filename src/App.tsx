@@ -35,6 +35,7 @@ import { RippleLayer } from "./components/RippleLayer";
 import { MediaLayer } from "./components/MediaLayer";
 import { TopBar, type ViewMode } from "./components/TopBar";
 import { DiscStage } from "./components/DiscStage";
+import { LyricsView } from "./components/LyricsView";
 import { Controls } from "./components/Controls";
 import { Playlist } from "./components/Playlist";
 import { ClockCard } from "./components/Clock";
@@ -232,7 +233,7 @@ export default function App() {
   const player = usePlayer(tracks, pushToast, () => topUpSimilar(false));
   playerRef.current = player;
   const track = tracks[player.index] ?? tracks[0];
-  useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time);
+  useBeatDriver(player.playing, track?.bpm ?? 110, track?.seed ?? 1, player.time, player.muted ? 0 : player.volume);
 
   /* ---------------- native Android audio bridge ---------------- */
   useNativeAudioBridge(
@@ -305,6 +306,7 @@ export default function App() {
   /* ---------------- Room Mode (Supabase Realtime) ---------------- */
   const [roomOpen, setRoomOpen] = useState(false);
   const [playlistsOpen, setPlaylistsOpen] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
   const [roomTarget, setRoomTarget] = useState<PlaybackState | null>(null);
 
   const getPlayback = useCallback(() => {
@@ -858,6 +860,8 @@ export default function App() {
           roomCount={room.online}
           onPlaylists={() => setPlaylistsOpen(true)}
           playlistsOpen={playlistsOpen}
+          lyricsOpen={showLyrics}
+          onToggleLyrics={() => setShowLyrics((s) => !s)}
         />
 
         {/* View 1: Full Clock Window with Full Weather View (Screenshot 3) */}
@@ -906,18 +910,33 @@ export default function App() {
                 mobileTab === "queue" ? "flex flex-1" : "hidden"
               )}
             >
-              <DiscStage
-                track={track}
-                playing={player.playing}
-                buffering={player.buffering}
-                ready={player.ready}
-                time={player.time}
-                duration={player.duration}
-                buffered={player.buffered}
-                liked={liked.has(track?.id ?? "")}
-                onLike={toggleLike}
-                theme={effectiveTheme}
-              />
+              {showLyrics ? (
+                <div className="flex flex-1 min-h-[340px] max-h-[460px] w-full max-w-[420px] mx-auto">
+                  <LyricsView
+                    track={track}
+                    currentTime={player.time}
+                    duration={player.duration}
+                    theme={effectiveTheme}
+                    onSeek={handleSeek}
+                    onClose={() => setShowLyrics(false)}
+                  />
+                </div>
+              ) : (
+                <DiscStage
+                  track={track}
+                  playing={player.playing}
+                  buffering={player.buffering}
+                  ready={player.ready}
+                  time={player.time}
+                  duration={player.duration}
+                  buffered={player.buffered}
+                  liked={liked.has(track?.id ?? "")}
+                  onLike={toggleLike}
+                  theme={effectiveTheme}
+                  onToggleLyrics={() => setShowLyrics(true)}
+                  showLyrics={showLyrics}
+                />
+              )}
               <Controls
                 player={player}
                 locked={controlsLocked}

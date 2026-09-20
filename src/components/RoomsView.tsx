@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import type { RoomApi } from "../hooks/useRoom";
 import { persistence, type RoomHistoryItem } from "../lib/persistence";
 import {

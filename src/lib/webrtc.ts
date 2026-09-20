@@ -112,11 +112,12 @@ export class WebRtcVoiceManager {
           }
         });
 
-        // Schedule a peer reconnect pass after a short delay to let the Supabase
-        // WebSocket reconnect first (so signaling is available for ICE renegotiation).
-        window.setTimeout(() => {
-          this.reconnectAllPeers();
-        }, 2000);
+        // Only recover connections that are strictly failed
+        this.peers.forEach((pc, uid) => {
+          if (pc.connectionState === "failed") {
+            this.recoverPeerConnection(uid, true);
+          }
+        });
       }
     };
     document.addEventListener("visibilitychange", this.onVisibilityChange);
@@ -213,12 +214,11 @@ export class WebRtcVoiceManager {
   /** Initiate WebRTC PeerConnection with a remote participant */
   public async connectToPeer(remoteUserId: string, createOffer: boolean): Promise<RTCPeerConnection> {
     let pc = this.peers.get(remoteUserId);
-    // Allow creating a fresh connection when in a terminal or "disconnected" state
+    // Allow creating a fresh connection only when in a terminal state (closed or failed)
     const unhealthy =
       !pc ||
       pc.connectionState === "closed" ||
-      pc.connectionState === "failed" ||
-      pc.connectionState === "disconnected";
+      pc.connectionState === "failed";
     if (!unhealthy) {
       return pc!;
     }
@@ -279,8 +279,17 @@ export class WebRtcVoiceManager {
         // Immediate recovery for hard failures
         this.recoverPeerConnection(remoteUserId, true);
       } else if (state === "disconnected") {
-        // Shorter grace period (3 s instead of 5 s) for faster recovery
-        this.recoverPeerConnection(remoteUserId, false);
+        // Generous grace period (20s) to allow background tabs to self-heal without killing call
+        if (!this.reconnectTimers.has(remoteUserId)) {
+          const t = window.setTimeout(() => {
+            this.reconnectTimers.delete(remoteUserId);
+            const curPc = this.peers.get(remoteUserId);
+            if (curPc && curPc.iceConnectionState === "failed") {
+              this.recoverPeerConnection(remoteUserId, true);
+            }
+          }, 20000);
+          this.reconnectTimers.set(remoteUserId, t);
+        }
       }
     };
 
@@ -320,8 +329,7 @@ export class WebRtcVoiceManager {
     this.peers.forEach((pc, uid) => {
       const bad =
         pc.connectionState === "failed" ||
-        pc.connectionState === "closed" ||
-        pc.connectionState === "disconnected";
+        pc.connectionState === "closed";
       if (bad) {
         this.recoverPeerConnection(uid, true);
       }

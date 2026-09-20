@@ -208,8 +208,8 @@ export const VoicePanel: React.FC<VoicePanelProps> = ({
             type="button"
             onClick={handleToggleVoice}
             disabled={!room.room?.voiceEnabled || voice.status === "requesting_mic"}
-            className="flex h-12 w-full items-center justify-center gap-2.5 rounded-xl font-display text-xs font-bold uppercase tracking-wider text-black transition-all shadow-lg hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
-            style={{ background: "linear-gradient(135deg, var(--acc0), var(--acc1))" }}
+            className="flex h-12 w-full items-center justify-center gap-2.5 rounded-xl font-display text-xs font-bold uppercase tracking-wider text-[#0d151c] transition-all shadow-sm hover:brightness-105 active:scale-[0.98] disabled:opacity-40"
+            style={{ backgroundColor: "var(--acc0)" }}
           >
             <MicIcon size={17} />
             {voice.status === "requesting_mic" ? "Requesting Microphone…" : "Join Voice Channel"}
@@ -228,7 +228,7 @@ export const VoicePanel: React.FC<VoicePanelProps> = ({
                   ? "border-amber-500/40 bg-amber-500/15 text-amber-300 cursor-not-allowed"
                   : voice.selfMuted
                   ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
-                  : "border-emerald-500/40 bg-emerald-500/20 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
+                  : "border-emerald-500/40 bg-emerald-500/20 text-emerald-300 shadow-sm"
               }`}
             >
               {voice.hostMuted ? (

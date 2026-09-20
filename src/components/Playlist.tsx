@@ -61,11 +61,11 @@ export function Playlist({
             {tracks.length} track{tracks.length === 1 ? "" : "s"}
           </span>
           <motion.button
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: 1.04 }}
+            whileTap={{ scale: 0.94 }}
             onClick={() => setOpenInput((o) => !o)}
-            className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-black shadow-sm"
-            style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
+            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-[#0d151c] font-semibold shadow-sm"
+            style={{ backgroundColor: "var(--acc0)" }}
             aria-label="Add song link"
           >
             <PlusIcon size={12} /> add link
@@ -121,8 +121,8 @@ export function Playlist({
               <button
                 onClick={submit}
                 disabled={busy || !draft.trim()}
-                className="rounded-xl px-4 py-2 font-tmono text-[10px] uppercase tracking-[0.12em] text-black font-semibold disabled:opacity-40"
-                style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
+                className="rounded-xl px-4 py-2 font-tmono text-[10px] uppercase tracking-[0.12em] text-[#0d151c] font-semibold disabled:opacity-40"
+                style={{ backgroundColor: "var(--acc0)" }}
               >
                 {busy ? "adding…" : "queue"}
               </button>
@@ -153,7 +153,7 @@ export function Playlist({
                 {active && (
                   <motion.span
                     layoutId="queue-active-glow"
-                    className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-[var(--acc0)] shadow-[0_0_10px_var(--acc0)]"
+                    className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-[var(--acc0)]"
                   />
                 )}
 
@@ -180,7 +180,7 @@ export function Playlist({
                 <span
                   className={cn(
                     "relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-xl ring-1 transition-shadow",
-                    active ? "ring-[var(--acc0)]/50 shadow-[0_0_14px_-4px_var(--acc0)]" : "ring-white/8"
+                    active ? "ring-[var(--acc0)]/60 shadow-sm" : "ring-white/8"
                   )}
                 >
                   <img src={t.thumb} alt="" className="h-full w-full object-cover" draggable={false} loading="lazy" />

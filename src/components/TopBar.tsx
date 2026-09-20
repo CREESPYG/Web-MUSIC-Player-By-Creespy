@@ -9,6 +9,7 @@ import {
   HeadphonesIcon,
   FolderMusicIcon,
   PaletteIcon,
+  LyricsIcon,
 } from "./UiIcons";
 import { cn } from "../utils/cn";
 
@@ -30,6 +31,8 @@ interface Props {
   roomCount: number;
   onPlaylists?: () => void;
   playlistsOpen?: boolean;
+  lyricsOpen?: boolean;
+  onToggleLyrics?: () => void;
 }
 
 const VIEWS: { v: ViewMode; label: string; Icon: typeof LayoutIcon }[] = [
@@ -53,6 +56,8 @@ export function TopBar({
   roomCount,
   onPlaylists,
   playlistsOpen,
+  lyricsOpen,
+  onToggleLyrics,
 }: Props) {
   // Check if a custom accent is currently active (distinct from the active base theme's primary color)
   const isCustom = Boolean(
@@ -109,14 +114,32 @@ export function TopBar({
               role="radio"
               className={cn(
                 "grid h-8 w-8 place-items-center rounded-full transition-colors",
-                view === v ? "text-black" : "text-[var(--dim)] hover:text-[var(--ink)]"
+                view === v ? "text-[#0d151c] font-medium" : "text-[var(--dim)] hover:text-[var(--ink)]"
               )}
-              style={view === v ? { background: "linear-gradient(135deg,var(--acc0),var(--acc1))" } : undefined}
+              style={view === v ? { backgroundColor: "var(--acc0)" } : undefined}
             >
               <Icon size={16} />
             </button>
           ))}
         </div>
+
+        {/* Lyrics quick toggle */}
+        {onToggleLyrics && (
+          <button
+            onClick={onToggleLyrics}
+            title={lyricsOpen ? "Switch to Disc View" : "Synchronized Lyrics (LRCLIB)"}
+            aria-label="Toggle Lyrics"
+            aria-pressed={lyricsOpen}
+            className={cn(
+              "glass grid h-8 w-8 place-items-center rounded-full transition-all",
+              lyricsOpen
+                ? "bg-[var(--acc0)] text-[#0d151c] font-bold shadow-sm"
+                : "text-[var(--dim)] hover:text-[var(--ink)]"
+            )}
+          >
+            <LyricsIcon size={15} />
+          </button>
+        )}
 
         {/* Unified Accent Themes & Custom Color Picker */}
         <div
@@ -192,7 +215,7 @@ export function TopBar({
                 <motion.span
                   layoutId="theme-ring"
                   transition={{ type: "spring", stiffness: 420, damping: 30 }}
-                  className="absolute -inset-[3.5px] rounded-full border-2 border-white/90 shadow-[0_0_9px_var(--acc0)]"
+                  className="absolute -inset-[3.5px] rounded-full border-2 border-white/90 shadow-sm"
                 />
                 <span className="h-1.5 w-1.5 rounded-full bg-white shadow-sm" />
               </>

@@ -87,13 +87,14 @@ export interface RoomHandlers {
   onToast?: (msg: string) => void;
 }
 
-interface CreateOpts {
+export interface CreateOpts {
   name: string;
   type: RoomType;
   requireApproval: boolean;
   control: PublicControl;
   chatEnabled?: boolean;
   voiceEnabled?: boolean;
+  nickname?: string;
 }
 
 const HEARTBEAT_MS = 4000;
@@ -526,7 +527,7 @@ export function useRoom(handlers: RoomHandlers) {
 
       if (!rosterMap.has(uid)) {
         // Keep in roster for at least 75 seconds if tab switched or backgrounded
-        if (now - cachedMember.lastSeen < 75000) {
+        if (now - (cachedMember.lastSeen ?? 0) < 75000) {
           rosterMap.set(uid, { ...cachedMember, state: "active" });
         } else {
           // Expiry after prolonged disappearance without explicit leave
@@ -746,7 +747,7 @@ export function useRoom(handlers: RoomHandlers) {
           prev.map((m) => (m.id === uid ? { ...m, nickname: cleanNew, name: cleanNew } : m))
         );
 
-        if (roomRef.current?.hostId === uid) {
+        if (roomRef.current && roomRef.current.hostId === uid) {
           roomRef.current.hostName = cleanNew;
           setRoom((r) => (r ? { ...r, hostName: cleanNew } : r));
         }

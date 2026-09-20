@@ -4,10 +4,13 @@
  * Implements:
  * 1. Native WebRTC mesh connections between room voice peers with automatic ICE recovery.
  * 2. Background audio keep-alive preventing browser throttling/suspension during tab switching.
- * 3. Dedicated HTMLAudioElement output sink for uninterrupted background tab audio playback.
- * 4. AnalyserNodes for low-overhead real-time speaking detection (RMS volume).
- * 5. Automatic visibility & focus resynchronization to resume suspended AudioContexts.
- * 6. Full audio isolation from the YouTube music player.
+ * 3. Dedicated Web Audio API destination sink for reliable 0-150% volume amplification & autoplay compliance.
+ * 4. Resilient HTMLAudioElement stream keeper for background tab audio playback.
+ * 5. Robust ICE candidate queue to prevent signaling race conditions.
+ * 6. WebRTC audio transceivers ('sendrecv') guaranteeing bidirectional media negotiation.
+ * 7. AnalyserNodes for low-overhead real-time speaking detection (RMS volume).
+ * 8. Automatic visibility, focus, and user-gesture resynchronization to resume suspended AudioContexts.
+ * 9. Full audio isolation from the YouTube music player.
  */
 
 import { backgroundKeepAlive } from "./backgroundKeepAlive";
@@ -20,6 +23,8 @@ export function getIceConfig(): IceConfig {
   const metaEnv = typeof import.meta !== "undefined" && (import.meta as any).env ? (import.meta as any).env : {};
   const servers: RTCIceServer[] = [
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302", "stun:stun3.l.google.com:19302", "stun:stun4.l.google.com:19302"] },
+    { urls: ["stun:stun.cloudflare.com:3478"] },
+    { urls: ["stun:stun.services.mozilla.com:3478"] },
     { urls: ["stun:global.stun.twilio.com:3478"] },
   ];
 
@@ -61,15 +66,19 @@ export class WebRtcVoiceManager {
   private localUserId: string;
   private callbacks: WebRtcCallbacks;
   private audioContext: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private localStream: MediaStream | null = null;
   private localAnalyser: AnalyserNode | null = null;
   private peers = new Map<string, RTCPeerConnection>();
+  private transceivers = new Map<string, RTCRtpTransceiver>();
   private peerAudio = new Map<string, PeerAudioNode>();
+  private iceCandidateQueues = new Map<string, RTCIceCandidateInit[]>();
   private speakingMap = new Map<string, boolean>();
   private checkInterval: number | null = null;
   private keepAliveRelease: (() => void) | null = null;
   private reconnectTimers = new Map<string, number>();
   private onVisibilityChange: (() => void) | null = null;
+  private userInteractionCleanup: (() => void) | null = null;
 
   // Local Voice Permissions & State
   public canSpeak: boolean = true;
@@ -97,21 +106,22 @@ export class WebRtcVoiceManager {
     }
   }
 
-  /** Auto-wake audio and WebRTC connections when switching back into the tab */
+  /** Auto-wake audio and WebRTC connections when switching back into tab or user interacts */
   private setupVisibilityListeners() {
-    if (typeof document === "undefined") return;
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const resumeAudio = () => {
+      this.ensureAudioContext().catch(() => {});
+      this.peerAudio.forEach((node) => {
+        if (node.audioElement && node.audioElement.paused && this.canHear && !node.locallyMuted) {
+          node.audioElement.play().catch(() => {});
+        }
+      });
+    };
+
     this.onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        // Always resume AudioContext first — it may have been suspended by the browser
-        this.ensureAudioContext().catch(() => {});
-
-        // Resume any paused audio elements
-        this.peerAudio.forEach((node) => {
-          if (node.audioElement && node.audioElement.paused && this.canHear && !node.locallyMuted) {
-            node.audioElement.play().catch(() => {});
-          }
-        });
-
+        resumeAudio();
         // Schedule a peer reconnect pass after a short delay to let the Supabase
         // WebSocket reconnect first (so signaling is available for ICE renegotiation).
         window.setTimeout(() => {
@@ -119,9 +129,21 @@ export class WebRtcVoiceManager {
         }, 2000);
       }
     };
+
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("focus", this.onVisibilityChange);
     window.addEventListener("pageshow", this.onVisibilityChange);
+
+    // Global user-gesture interaction listener to defeat browser autoplay restrictions
+    window.addEventListener("click", resumeAudio, { passive: true });
+    window.addEventListener("keydown", resumeAudio, { passive: true });
+    window.addEventListener("touchstart", resumeAudio, { passive: true });
+
+    this.userInteractionCleanup = () => {
+      window.removeEventListener("click", resumeAudio);
+      window.removeEventListener("keydown", resumeAudio);
+      window.removeEventListener("touchstart", resumeAudio);
+    };
   }
 
   /** Initialize or resume Web Audio Context on user gesture */
@@ -131,7 +153,16 @@ export class WebRtcVoiceManager {
       this.audioContext = new AudioCtx();
     }
     if (this.audioContext.state === "suspended") {
-      await this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch {}
+    }
+    if (!this.masterGain && this.audioContext) {
+      try {
+        this.masterGain = this.audioContext.createGain();
+        this.masterGain.gain.setValueAtTime(this.canHear ? 1.0 : 0.0, this.audioContext.currentTime);
+        this.masterGain.connect(this.audioContext.destination);
+      } catch {}
     }
     return this.audioContext;
   }
@@ -179,16 +210,23 @@ export class WebRtcVoiceManager {
       this.updateLocalTrackState();
       this.startSpeakingMonitor();
 
-      // Attach track to all existing peer connections
+      // Attach track to all existing peer connections and transceivers
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
-        this.peers.forEach((pc) => {
-          const senders = pc.getSenders();
-          const audioSender = senders.find((s) => s.track?.kind === "audio");
-          if (audioSender) {
-            audioSender.replaceTrack(audioTrack).catch(() => {});
+        this.peers.forEach((pc, uid) => {
+          const transceiver = this.transceivers.get(uid);
+          if (transceiver && transceiver.sender) {
+            transceiver.sender.replaceTrack(audioTrack).catch(() => {});
           } else {
-            pc.addTrack(audioTrack, stream);
+            const senders = pc.getSenders();
+            const audioSender = senders.find((s) => s.track?.kind === "audio");
+            if (audioSender) {
+              audioSender.replaceTrack(audioTrack).catch(() => {});
+            } else {
+              try {
+                pc.addTrack(audioTrack, stream);
+              } catch {}
+            }
           }
         });
       }
@@ -210,6 +248,17 @@ export class WebRtcVoiceManager {
     }
   }
 
+  /** Drain queued ICE candidates once remoteDescription is set */
+  private async drainQueuedCandidates(userId: string, pc: RTCPeerConnection) {
+    const queue = this.iceCandidateQueues.get(userId) || [];
+    this.iceCandidateQueues.delete(userId);
+    for (const cand of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch {}
+    }
+  }
+
   /** Initiate WebRTC PeerConnection with a remote participant */
   public async connectToPeer(remoteUserId: string, createOffer: boolean): Promise<RTCPeerConnection> {
     let pc = this.peers.get(remoteUserId);
@@ -226,17 +275,36 @@ export class WebRtcVoiceManager {
     if (pc) {
       pc.close();
       this.peers.delete(remoteUserId);
+      this.transceivers.delete(remoteUserId);
     }
 
     const config = getIceConfig();
     pc = new RTCPeerConnection(config);
     this.peers.set(remoteUserId, pc);
 
-    // Add local audio track if microphone active
-    if (this.localStream) {
-      const track = this.localStream.getAudioTracks()[0];
-      if (track) {
-        pc.addTrack(track, this.localStream);
+    // 1. Explicitly create audio transceiver ('sendrecv')
+    // This ensures bidirectional audio SDP negotiation even if mic stream is still initializing.
+    try {
+      const transceiver = pc.addTransceiver("audio", {
+        direction: "sendrecv",
+        streams: this.localStream ? [this.localStream] : [],
+      });
+      this.transceivers.set(remoteUserId, transceiver);
+      if (this.localStream) {
+        const track = this.localStream.getAudioTracks()[0];
+        if (track && transceiver.sender) {
+          transceiver.sender.replaceTrack(track).catch(() => {});
+        }
+      }
+    } catch {
+      // Fallback if browser doesn't support addTransceiver
+      if (this.localStream) {
+        const track = this.localStream.getAudioTracks()[0];
+        if (track) {
+          try {
+            pc.addTrack(track, this.localStream);
+          } catch {}
+        }
       }
     }
 
@@ -276,19 +344,22 @@ export class WebRtcVoiceManager {
           this.reconnectTimers.delete(remoteUserId);
         }
       } else if (state === "failed") {
-        // Immediate recovery for hard failures
         this.recoverPeerConnection(remoteUserId, true);
       } else if (state === "disconnected") {
-        // Shorter grace period (3 s instead of 5 s) for faster recovery
         this.recoverPeerConnection(remoteUserId, false);
       }
     };
 
     pc.ontrack = (event) => {
-      const [remoteStream] = event.streams;
-      if (remoteStream) {
-        this.setupRemoteAudio(remoteUserId, remoteStream);
+      let remoteStream = event.streams?.[0];
+      if (!remoteStream) {
+        remoteStream = new MediaStream([event.track]);
       }
+      this.setupRemoteAudio(remoteUserId, remoteStream);
+
+      event.track.onunmute = () => {
+        this.setupRemoteAudio(remoteUserId, remoteStream!);
+      };
     };
 
     if (createOffer) {
@@ -330,7 +401,7 @@ export class WebRtcVoiceManager {
 
   /**
    * Automatic ICE restart & graceful peer reconnection.
-   * Disconnected states get a 3 s grace window to self-heal (reduced from 5 s).
+   * Disconnected states get a 3 s grace window to self-heal.
    */
   public async recoverPeerConnection(remoteUserId: string, immediate = false) {
     if (this.reconnectTimers.has(remoteUserId)) return;
@@ -365,6 +436,7 @@ export class WebRtcVoiceManager {
         try {
           pc.close();
           this.peers.delete(remoteUserId);
+          this.transceivers.delete(remoteUserId);
           await this.connectToPeer(remoteUserId, true);
         } catch (err: any) {
           this.callbacks.onError(`Voice reconnect failed: ${err.message}`);
@@ -404,32 +476,67 @@ export class WebRtcVoiceManager {
     } catch {}
   }
 
-  /** Handle incoming SDP offer */
+  /** Handle incoming SDP offer with polite peer rollback on collision */
   public async handleOffer(fromUserId: string, sdp: RTCSessionDescriptionInit) {
-    const pc = await this.connectToPeer(fromUserId, false);
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    try {
+      const pc = await this.connectToPeer(fromUserId, false);
 
-    this.callbacks.onSignal({
-      to: fromUserId,
-      from: this.localUserId,
-      event: "voice_answer",
-      payload: answer,
-    });
+      // Handle offer collision with polite / impolite peer protocol
+      if (pc.signalingState !== "stable") {
+        const isPolite = this.localUserId < fromUserId;
+        if (isPolite) {
+          try {
+            await pc.setLocalDescription({ type: "rollback" } as any);
+          } catch {}
+        } else {
+          // Impolite peer ignores colliding offer
+          return;
+        }
+      }
+
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await this.drainQueuedCandidates(fromUserId, pc);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      this.callbacks.onSignal({
+        to: fromUserId,
+        from: this.localUserId,
+        event: "voice_answer",
+        payload: answer,
+      });
+    } catch (err: any) {
+      this.callbacks.onError(`Offer handling error: ${err.message || err}`);
+    }
   }
 
   /** Handle incoming SDP answer */
   public async handleAnswer(fromUserId: string, sdp: RTCSessionDescriptionInit) {
-    const pc = this.peers.get(fromUserId);
-    if (!pc) return;
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    try {
+      const pc = this.peers.get(fromUserId);
+      if (!pc) return;
+      if (pc.signalingState === "have-local-offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        await this.drainQueuedCandidates(fromUserId, pc);
+      }
+    } catch (err: any) {
+      this.callbacks.onError(`Answer handling error: ${err.message || err}`);
+    }
   }
 
-  /** Handle incoming ICE candidate */
+  /** Handle incoming ICE candidate with queueing until remote description is ready */
   public async handleIceCandidate(fromUserId: string, candidateInit: RTCIceCandidateInit) {
     const pc = this.peers.get(fromUserId);
-    if (!pc) return;
+    if (!pc || !pc.remoteDescription) {
+      let q = this.iceCandidateQueues.get(fromUserId);
+      if (!q) {
+        q = [];
+        this.iceCandidateQueues.set(fromUserId, q);
+      }
+      q.push(candidateInit);
+      return;
+    }
     try {
       await pc.addIceCandidate(new RTCIceCandidate(candidateInit));
     } catch {
@@ -437,7 +544,7 @@ export class WebRtcVoiceManager {
     }
   }
 
-  /** Setup direct HTMLAudioElement output sink for background tab survival */
+  /** Setup direct Web Audio destination routing for desktop & mobile playback */
   private async setupRemoteAudio(userId: string, stream: MediaStream) {
     const ctx = await this.ensureAudioContext();
 
@@ -453,12 +560,14 @@ export class WebRtcVoiceManager {
     if (existing?.gainNode) existing.gainNode.disconnect();
     if (existing?.analyserNode) existing.analyserNode.disconnect();
 
-    // Attach to HTMLAudioElement as the primary playback sink for uninterrupted background playback
+    // 1. Maintain HTMLAudioElement as an active MediaStream consumer for background tab preservation.
+    // Kept muted to prevent double-playback against Web Audio destination.
     let audioEl = existing?.audioElement;
     if (!audioEl) {
       audioEl = document.createElement("audio");
       audioEl.autoplay = true;
       (audioEl as any).playsInline = true;
+      audioEl.muted = true;
       audioEl.style.position = "fixed";
       audioEl.style.width = "1px";
       audioEl.style.height = "1px";
@@ -469,10 +578,12 @@ export class WebRtcVoiceManager {
       document.body.appendChild(audioEl);
     }
     audioEl.srcObject = stream;
+    audioEl.play().catch(() => {});
 
-    // Web Audio pipeline: source → gain → analyser
-    // The gainNode allows volume above 1.0 (100%) up to 1.5 (150%).
-    // The audioElement is the primary audio output (works in background).
+    // 2. Primary Web Audio Pipeline:
+    // source → gainNode → analyserNode
+    // gainNode → masterGain → ctx.destination
+    // This produces reliable desktop audio without autoplay blockage and supports up to 150% boost.
     let source: MediaStreamAudioSourceNode | undefined;
     let gainNode: GainNode | undefined;
     let analyser: AnalyserNode | undefined;
@@ -482,8 +593,15 @@ export class WebRtcVoiceManager {
       analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.4;
+
       source.connect(gainNode);
       gainNode.connect(analyser);
+
+      if (this.masterGain) {
+        gainNode.connect(this.masterGain);
+      } else {
+        gainNode.connect(ctx.destination);
+      }
     } catch {
       // AudioContext might still be initializing on some platforms
     }
@@ -503,37 +621,27 @@ export class WebRtcVoiceManager {
     this.updatePeerGain(userId);
   }
 
-  /** Update gain for a peer: uses HTMLAudioElement for 0-100%, gainNode for 100-150% */
+  /** Update gain for a peer: uses Web Audio gainNode for 0% - 150% output */
   public updatePeerGain(userId: string) {
     const node = this.peerAudio.get(userId);
     if (!node) return;
 
     const muted = !this.canHear || node.locallyMuted;
 
-    // HTMLAudioElement controls whether audio plays at all (and handles background tabs)
-    const audioEl = node.audioElement;
-    if (audioEl) {
+    if (node.gainNode && this.audioContext) {
+      const now = this.audioContext.currentTime;
       if (muted) {
-        audioEl.muted = true;
-        audioEl.volume = 0;
+        node.gainNode.gain.setTargetAtTime(0, now, 0.01);
       } else {
-        audioEl.muted = false;
-        // Cap audioEl volume at 1.0; for >100% we boost with gainNode
-        const elVol = Math.max(0, Math.min(1.0, node.volume / 100));
-        audioEl.volume = elVol;
-      }
-      if (audioEl.paused && !muted) {
-        audioEl.play().catch(() => {});
+        const gain = Math.max(0, node.volume / 100); // 0.0 – 1.5
+        node.gainNode.gain.setTargetAtTime(gain, now, 0.01);
       }
     }
 
-    // gainNode provides amplification for volumes above 100%
-    if (node.gainNode) {
-      if (muted) {
-        node.gainNode.gain.setTargetAtTime(0, node.gainNode.context.currentTime, 0.01);
-      } else {
-        const gain = node.volume / 100; // 0.0 – 1.5
-        node.gainNode.gain.setTargetAtTime(gain, node.gainNode.context.currentTime, 0.01);
+    if (node.audioElement) {
+      node.audioElement.muted = true;
+      if (node.audioElement.paused) {
+        node.audioElement.play().catch(() => {});
       }
     }
   }
@@ -578,6 +686,9 @@ export class WebRtcVoiceManager {
   /** Update global hearing permission for local client */
   public setCanHear(allowed: boolean) {
     this.canHear = allowed;
+    if (this.masterGain && this.audioContext) {
+      this.masterGain.gain.setTargetAtTime(allowed ? 1.0 : 0.0, this.audioContext.currentTime, 0.01);
+    }
     this.peerAudio.forEach((_, uid) => this.updatePeerGain(uid));
   }
 
@@ -633,6 +744,9 @@ export class WebRtcVoiceManager {
       pc.close();
       this.peers.delete(userId);
     }
+    this.transceivers.delete(userId);
+    this.iceCandidateQueues.delete(userId);
+
     const node = this.peerAudio.get(userId);
     if (node) {
       node.sourceNode?.disconnect();
@@ -661,6 +775,11 @@ export class WebRtcVoiceManager {
       this.onVisibilityChange = null;
     }
 
+    if (this.userInteractionCleanup) {
+      this.userInteractionCleanup();
+      this.userInteractionCleanup = null;
+    }
+
     this.reconnectTimers.forEach((timer) => window.clearTimeout(timer));
     this.reconnectTimers.clear();
 
@@ -680,6 +799,8 @@ export class WebRtcVoiceManager {
     // Close all peer connections
     this.peers.forEach((pc) => pc.close());
     this.peers.clear();
+    this.transceivers.clear();
+    this.iceCandidateQueues.clear();
 
     // Disconnect audio nodes and remove HTMLAudioElements
     this.peerAudio.forEach((node) => {
@@ -694,7 +815,10 @@ export class WebRtcVoiceManager {
     this.peerAudio.clear();
     this.speakingMap.clear();
 
-    // Close AudioContext
+    // Close master gain and AudioContext
+    this.masterGain?.disconnect();
+    this.masterGain = null;
+
     if (this.audioContext && this.audioContext.state !== "closed") {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;

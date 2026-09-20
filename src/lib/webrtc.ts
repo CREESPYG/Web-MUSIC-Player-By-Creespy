@@ -19,19 +19,56 @@ export interface IceConfig {
   iceServers: RTCIceServer[];
 }
 
+let cachedDynamicServers: RTCIceServer[] = [];
+
+// Pre-fetch dynamic Metered TURN credentials if configured
+(() => {
+  const metaEnv = typeof import.meta !== "undefined" && (import.meta as any).env ? (import.meta as any).env : {};
+  const appName = metaEnv.VITE_METERED_APP_NAME;
+  const apiKey = metaEnv.VITE_METERED_API_KEY;
+  if (appName && apiKey && typeof fetch !== "undefined") {
+    fetch(`https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`)
+      .then((res) => res.json())
+      .then((ice) => {
+        if (Array.isArray(ice)) {
+          cachedDynamicServers = ice;
+        }
+      })
+      .catch(() => {});
+  }
+})();
+
 export function getIceConfig(): IceConfig {
   const metaEnv = typeof import.meta !== "undefined" && (import.meta as any).env ? (import.meta as any).env : {};
   const servers: RTCIceServer[] = [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302", "stun:stun3.l.google.com:19302", "stun:stun4.l.google.com:19302"] },
+    // Cloudflare STUN (low-latency, globally distributed, highly reliable)
     { urls: ["stun:stun.cloudflare.com:3478"] },
+
+    // Google Public STUN servers
+    {
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+      ],
+    },
+
+    // Mozilla & Twilio STUN fallbacks
     { urls: ["stun:stun.services.mozilla.com:3478"] },
     { urls: ["stun:global.stun.twilio.com:3478"] },
   ];
 
+  // Include dynamic Metered TURN servers if fetched
+  if (cachedDynamicServers.length > 0) {
+    servers.push(...cachedDynamicServers);
+  }
+
+  // Custom user-defined STUN server
   if (metaEnv.VITE_STUN_SERVER_URL) {
     servers.push({ urls: [metaEnv.VITE_STUN_SERVER_URL] });
   }
 
+  // Custom user-defined TURN relay server (supports Coturn, ExpressTURN, Xirsys, Metered)
   if (metaEnv.VITE_TURN_SERVER_URL) {
     const turnConfig: RTCIceServer = {
       urls: [metaEnv.VITE_TURN_SERVER_URL],
@@ -253,6 +290,7 @@ export class WebRtcVoiceManager {
     const queue = this.iceCandidateQueues.get(userId) || [];
     this.iceCandidateQueues.delete(userId);
     for (const cand of queue) {
+      if (!cand || !cand.candidate) continue;
       try {
         await pc.addIceCandidate(new RTCIceCandidate(cand));
       } catch {}
@@ -279,7 +317,12 @@ export class WebRtcVoiceManager {
     }
 
     const config = getIceConfig();
-    pc = new RTCPeerConnection(config);
+    pc = new RTCPeerConnection({
+      ...config,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
+    });
     this.peers.set(remoteUserId, pc);
 
     // 1. Explicitly create audio transceiver ('sendrecv')
@@ -527,6 +570,7 @@ export class WebRtcVoiceManager {
 
   /** Handle incoming ICE candidate with queueing until remote description is ready */
   public async handleIceCandidate(fromUserId: string, candidateInit: RTCIceCandidateInit) {
+    if (!candidateInit || !candidateInit.candidate) return;
     const pc = this.peers.get(fromUserId);
     if (!pc || !pc.remoteDescription) {
       let q = this.iceCandidateQueues.get(fromUserId);

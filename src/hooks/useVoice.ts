@@ -573,28 +573,28 @@ export function useVoice({
     // WebRTC signaling
     const onVoiceOffer = async ({ payload }: { payload: any }) => {
       if (payload?.to !== myUserId) return;
-      if (rtcRef.current && statusRef.current === "connected") {
+      if (rtcRef.current) {
         await rtcRef.current.handleOffer(payload.from, payload.payload);
       }
     };
 
     const onVoiceAnswer = async ({ payload }: { payload: any }) => {
       if (payload?.to !== myUserId) return;
-      if (rtcRef.current && statusRef.current === "connected") {
+      if (rtcRef.current) {
         await rtcRef.current.handleAnswer(payload.from, payload.payload);
       }
     };
 
     const onVoiceIce = async ({ payload }: { payload: any }) => {
       if (payload?.to !== myUserId) return;
-      if (rtcRef.current && statusRef.current === "connected") {
+      if (rtcRef.current) {
         await rtcRef.current.handleIceCandidate(payload.from, payload.payload);
       }
     };
 
     const onVoiceRenegotiate = async ({ payload }: { payload: any }) => {
       if (payload?.to !== myUserId) return;
-      if (rtcRef.current && statusRef.current === "connected") {
+      if (rtcRef.current) {
         await rtcRef.current.handleRenegotiate(payload.from);
       }
     };

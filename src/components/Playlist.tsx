@@ -54,49 +54,44 @@ export function Playlist({
 
   return (
     <div className="glass flex min-h-0 flex-1 flex-col p-3.5 md:p-5 rounded-[var(--radius)]">
-      <div className="mb-3 flex shrink-0 items-baseline justify-between px-1">
+      <div className="mb-3 flex shrink-0 items-center justify-between px-1">
         <h3 className="font-display text-sm font-bold uppercase tracking-[0.2em] text-[var(--ink)]">Queue</h3>
         <div className="flex items-center gap-2">
           <span className="font-tmono text-[10px] uppercase tracking-[0.16em] text-[var(--dim)]">
             {tracks.length} track{tracks.length === 1 ? "" : "s"}
           </span>
-          <motion.button
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.94 }}
+          <md-filled-button
             onClick={() => setOpenInput((o) => !o)}
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-[#0d151c] font-semibold shadow-sm"
-            style={{ backgroundColor: "var(--acc0)" }}
             aria-label="Add song link"
+            style={{ "--md-filled-button-container-height": "32px", "--md-filled-button-label-text-size": "11px" } as any}
           >
-            <PlusIcon size={12} /> add link
-          </motion.button>
+            <span slot="icon"><PlusIcon size={14} /></span>
+            Add link
+          </md-filled-button>
         </div>
       </div>
 
       {/* magic shuffle + similar row */}
       <div className="mb-3 flex items-center gap-2">
-        <button
+        <md-filter-chip
+          selected={magic}
           onClick={() => player.setShuffle(magic ? "off" : "magic")}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-full border py-2 font-tmono text-[9px] uppercase tracking-[0.14em] transition-all"
-          style={{
-            borderColor: magic ? "var(--acc2)" : "rgba(255,255,255,0.12)",
-            background: magic ? "color-mix(in srgb, var(--acc2) 14%, transparent)" : "rgba(255,255,255,0.03)",
-            color: magic ? "var(--acc2)" : "var(--dim)",
-          }}
-          aria-pressed={magic}
+          label={magic ? "Magic on" : "Magic off"}
           title={magic ? "Magic shuffle auto-plays songs pulled from YouTube" : "Turn on to auto-discover & play similar songs"}
+          style={{ "--md-filter-chip-container-height": "32px", "--md-filter-chip-label-text-size": "11px", flex: "1" } as any}
         >
-          <SparkIcon size={12} /> magic {magic ? "on" : "off"}
-        </button>
-        <button
-          onClick={onFindSimilar}
+          <span slot="icon"><SparkIcon size={14} /></span>
+        </md-filter-chip>
+
+        <md-assist-chip
           disabled={similarBusy || !current}
-          className="flex items-center justify-center gap-1.5 rounded-full border border-white/12 bg-white/3 px-3.5 py-2 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)] transition-colors hover:border-[var(--acc0)]/50 hover:text-[var(--acc0)] disabled:opacity-50"
+          onClick={onFindSimilar}
+          label={similarBusy ? "Searching…" : "Similar songs"}
           title="Search YouTube for similar songs now"
+          style={{ "--md-assist-chip-container-height": "32px", "--md-assist-chip-label-text-size": "11px" } as any}
         >
-          <LinkIcon size={12} />
-          {similarBusy ? "searching…" : "similar"}
-        </button>
+          <span slot="icon"><LinkIcon size={14} /></span>
+        </md-assist-chip>
       </div>
 
       {/* paste-a-link row */}
@@ -109,7 +104,7 @@ export function Playlist({
             transition={{ duration: 0.28, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <input
                 type="text"
                 value={draft}
@@ -118,14 +113,13 @@ export function Playlist({
                 placeholder="Paste YouTube or Spotify link..."
                 className="flex-1 rounded-xl border border-white/12 bg-black/40 px-3.5 py-2 font-tmono text-[11px] text-[var(--ink)] placeholder-[var(--dim)] outline-none focus:border-[var(--acc0)]"
               />
-              <button
-                onClick={submit}
+              <md-filled-button
                 disabled={busy || !draft.trim()}
-                className="rounded-xl px-4 py-2 font-tmono text-[10px] uppercase tracking-[0.12em] text-[#0d151c] font-semibold disabled:opacity-40"
-                style={{ backgroundColor: "var(--acc0)" }}
+                onClick={submit}
+                style={{ "--md-filled-button-container-height": "36px", "--md-filled-button-label-text-size": "11px" } as any}
               >
                 {busy ? "adding…" : "queue"}
-              </button>
+              </md-filled-button>
             </div>
             {error && <p className="mt-1 px-1 font-tmono text-[9px] text-[#ff9aa6]">{error}</p>}
           </motion.div>
@@ -150,6 +144,7 @@ export function Playlist({
                   active ? "border border-[var(--acc0)]/35 bg-white/8" : "border border-transparent hover:bg-white/5"
                 )}
               >
+                <md-ripple></md-ripple>
                 {active && (
                   <motion.span
                     layoutId="queue-active-glow"

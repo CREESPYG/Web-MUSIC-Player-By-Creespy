@@ -14,7 +14,7 @@ import {
   VolumeIcon,
   MuteIcon,
 } from "../../Icons";
-import { ListMusicIcon, SparkIcon, ClockOnlyIcon, CloseIcon } from "../../UiIcons";
+import { ListMusicIcon, ClockOnlyIcon, CloseIcon } from "../../UiIcons";
 import { useSleepTimer, SLEEP_PRESETS } from "../../../hooks/useSleepTimer";
 
 interface Props {
@@ -127,69 +127,52 @@ export function MobilePlayerScreen({
       {/* 3. Primary Controls (Shuffle, Prev, Play/Pause, Next, Repeat) */}
       <div className="mt-2 flex shrink-0 items-center justify-between px-3">
         {/* Shuffle */}
-        <button
-          type="button"
+        <md-icon-button
+          toggle
+          selected={player.shuffleMode !== "off"}
           onClick={player.cycleShuffle}
-          className={`relative grid h-10 w-10 place-items-center rounded-full transition-colors active:scale-90 ${
-            player.shuffleMode !== "off" ? "text-[var(--acc0)]" : "text-[var(--dim)]"
-          }`}
           aria-label="Shuffle"
         >
           <ShuffleIcon size={18} />
-          {player.shuffleMode === "magic" && (
-            <span className="absolute bottom-0 text-[var(--acc0)]"><SparkIcon size={10} /></span>
-          )}
-        </button>
+        </md-icon-button>
 
         {/* Previous */}
-        <button
-          type="button"
+        <md-icon-button
           onClick={player.prev}
-          className="grid h-12 w-12 place-items-center rounded-full text-[var(--ink)] transition-transform active:scale-90"
           aria-label="Previous"
         >
           <PrevIcon size={22} />
-        </button>
+        </md-icon-button>
 
         {/* Play / Pause Primary Button */}
-        <button
-          type="button"
+        <md-fab
+          size="medium"
+          variant="primary"
           onClick={player.toggle}
-          className="grid h-16 w-16 place-items-center rounded-full font-bold text-[#0d151c] shadow-sm transition-transform active:scale-95"
-          style={{
-            backgroundColor: "var(--acc0)",
-          }}
           aria-label={player.playing ? "Pause" : "Play"}
         >
-          {player.playing ? <PauseIcon size={26} /> : <PlayIcon size={26} className="ml-0.5" />}
-        </button>
+          <span slot="icon" className="grid place-items-center">
+            {player.playing ? <PauseIcon size={26} /> : <PlayIcon size={26} className="ml-0.5" />}
+          </span>
+        </md-fab>
 
         {/* Next */}
-        <button
-          type="button"
+        <md-icon-button
           onClick={player.next}
-          className="grid h-12 w-12 place-items-center rounded-full text-[var(--ink)] transition-transform active:scale-90"
           aria-label="Next"
         >
           <NextIcon size={22} />
-        </button>
+        </md-icon-button>
 
         {/* Repeat */}
-        <button
-          type="button"
+        <md-icon-button
+          toggle
+          selected={player.repeat !== "off"}
           onClick={player.cycleRepeat}
-          className={`relative grid h-10 w-10 place-items-center rounded-full transition-colors active:scale-90 ${
-            player.repeat !== "off" ? "text-[var(--acc0)]" : "text-[var(--dim)]"
-          }`}
           aria-label="Repeat"
         >
           <RepeatIcon size={18} />
-          {player.repeat === "one" && (
-            <span className="absolute -top-0.5 right-1 font-tmono text-[8px] font-bold text-[var(--acc0)]">
-              1
-            </span>
-          )}
-        </button>
+        </md-icon-button>
       </div>
 
       {/* 4. Secondary Row: Volume, Speed & Queue Shortcut */}

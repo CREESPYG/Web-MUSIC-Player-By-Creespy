@@ -35,7 +35,7 @@ import { RippleLayer } from "./components/RippleLayer";
 import { MediaLayer } from "./components/MediaLayer";
 import { TopBar, type ViewMode } from "./components/TopBar";
 import { DiscStage } from "./components/DiscStage";
-import { AudioSpectrumStrip } from "./components/AudioSpectrumStrip";
+import { CavaVisualizer } from "./components/CavaVisualizer";
 import { LyricsView } from "./components/LyricsView";
 import { Controls } from "./components/Controls";
 import { Playlist } from "./components/Playlist";
@@ -954,7 +954,7 @@ export default function App() {
                   showLyrics={showLyrics}
                 />
               )}
-              <AudioSpectrumStrip playing={player.playing} theme={effectiveTheme} />
+              <CavaVisualizer playing={player.playing} theme={effectiveTheme} />
               <Controls
                 player={player}
                 locked={controlsLocked}

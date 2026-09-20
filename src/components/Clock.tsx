@@ -32,10 +32,6 @@ export function ClockCard({
 
   return (
     <div className="glass relative overflow-hidden p-4 md:p-5">
-      <div
-        className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full opacity-40 blur-2xl"
-        style={{ background: "var(--acc0)" }}
-      />
       <div className="relative flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="font-tmono text-[9.5px] uppercase tracking-[0.28em] text-[var(--dim)]">{c.greeting}</p>

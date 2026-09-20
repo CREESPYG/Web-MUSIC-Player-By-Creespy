@@ -103,42 +103,32 @@ export function TopBar({
         </div>
 
         {/* View mode switcher */}
-        <div className="glass flex items-center gap-1 rounded-full p-1" role="radiogroup" aria-label="View mode">
+        <div className="glass flex items-center gap-0.5 rounded-full p-0.5" role="radiogroup" aria-label="View mode">
           {VIEWS.map(({ v, label, Icon }) => (
-            <button
+            <md-icon-button
               key={v}
+              toggle
+              selected={view === v}
               onClick={() => onView(v)}
               title={label}
               aria-label={label}
-              aria-checked={view === v}
-              role="radio"
-              className={cn(
-                "grid h-8 w-8 place-items-center rounded-full transition-colors",
-                view === v ? "text-[#0d151c] font-medium" : "text-[var(--dim)] hover:text-[var(--ink)]"
-              )}
-              style={view === v ? { backgroundColor: "var(--acc0)" } : undefined}
             >
               <Icon size={16} />
-            </button>
+            </md-icon-button>
           ))}
         </div>
 
         {/* Lyrics quick toggle */}
         {onToggleLyrics && (
-          <button
+          <md-icon-button
+            toggle
+            selected={lyricsOpen}
             onClick={onToggleLyrics}
             title={lyricsOpen ? "Switch to Disc View" : "Synchronized Lyrics (LRCLIB)"}
             aria-label="Toggle Lyrics"
-            aria-pressed={lyricsOpen}
-            className={cn(
-              "glass grid h-8 w-8 place-items-center rounded-full transition-all",
-              lyricsOpen
-                ? "bg-[var(--acc0)] text-[#0d151c] font-bold shadow-sm"
-                : "text-[var(--dim)] hover:text-[var(--ink)]"
-            )}
           >
-            <LyricsIcon size={15} />
-          </button>
+            <LyricsIcon size={16} />
+          </md-icon-button>
         )}
 
         {/* Unified Accent Themes & Custom Color Picker */}
@@ -164,7 +154,7 @@ export function TopBar({
                   <motion.span
                     layoutId="theme-ring"
                     transition={{ type: "spring", stiffness: 420, damping: 30 }}
-                    className="absolute -inset-[3.5px] rounded-full border-2 border-white/85 shadow-[0_0_8px_rgba(255,255,255,0.4)]"
+                    className="absolute -inset-[3.5px] rounded-full border-2 border-white/85 shadow-sm"
                   />
                 )}
               </motion.button>
@@ -225,52 +215,35 @@ export function TopBar({
           </motion.button>
         </div>
 
-        {/* Playlists Hub Button */}
+        {/* Material Web Action Chips */}
         {onPlaylists && (
-          <motion.button
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.94 }}
+          <md-filter-chip
+            label="Playlists"
+            selected={playlistsOpen}
             onClick={onPlaylists}
-            className="glass relative flex items-center gap-2 rounded-full px-3.5 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.16em] transition-colors hover:text-[var(--acc0)]"
-            style={{ color: playlistsOpen ? "var(--acc0)" : "var(--dim)" }}
             aria-label="Playlists Hub"
           >
-            <FolderMusicIcon size={15} />
-            <span className="hidden sm:inline">playlists</span>
-          </motion.button>
+            <span slot="icon"><FolderMusicIcon size={15} /></span>
+          </md-filter-chip>
         )}
 
-        {/* Room Button */}
-        <motion.button
-          whileHover={{ scale: 1.04 }}
-          whileTap={{ scale: 0.94 }}
+        <md-filter-chip
+          label={roomActive ? `Room (${roomCount})` : "Room"}
+          selected={roomActive}
           onClick={onRoom}
-          className="glass relative flex items-center gap-2 rounded-full px-3.5 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.16em] transition-colors hover:text-[var(--acc0)]"
-          style={{ color: roomActive ? "var(--acc0)" : "var(--dim)" }}
           aria-label="Listen together room"
         >
-          <HeadphonesIcon size={15} />
-          <span className="hidden sm:inline">room</span>
-          {roomActive && (
-            <span className="flex items-center gap-1 rounded-full bg-[var(--acc0)]/15 px-1.5 py-0.5 text-[8px] text-[var(--acc0)]">
-              <span className="live-dot h-1.5 w-1.5 rounded-full bg-[var(--acc0)]" />
-              {roomCount}
-            </span>
-          )}
-        </motion.button>
+          <span slot="icon"><HeadphonesIcon size={15} /></span>
+        </md-filter-chip>
 
-        {/* Customize Button */}
-        <motion.button
-          whileHover={{ scale: 1.04 }}
-          whileTap={{ scale: 0.94 }}
+        <md-filter-chip
+          label="Customize"
+          selected={customizeOpen}
           onClick={onCustomize}
-          className="glass flex items-center gap-2 rounded-full px-3.5 py-2.5 font-tmono text-[9.5px] uppercase tracking-[0.16em] transition-colors hover:text-[var(--acc0)]"
-          style={{ color: customizeOpen ? "var(--acc0)" : "var(--dim)" }}
           aria-label="Customize"
         >
-          <SlidersIcon size={15} />
-          <span className="hidden sm:inline">customize</span>
-        </motion.button>
+          <span slot="icon"><SlidersIcon size={15} /></span>
+        </md-filter-chip>
       </div>
     </header>
   );

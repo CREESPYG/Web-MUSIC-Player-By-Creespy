@@ -202,63 +202,44 @@ export const VoicePanel: React.FC<VoicePanelProps> = ({
       )}
 
       {/* 2. Main Action Strip (Join, Leave, Mute) */}
-      <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3.5 mb-4">
+      <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3 mb-4">
         {!voice.isInVoice ? (
-          <button
-            type="button"
+          <md-filled-button
             onClick={handleToggleVoice}
             disabled={!room.room?.voiceEnabled || voice.status === "requesting_mic"}
-            className="flex h-12 w-full items-center justify-center gap-2.5 rounded-xl font-display text-xs font-bold uppercase tracking-wider text-[#0d151c] transition-all shadow-sm hover:brightness-105 active:scale-[0.98] disabled:opacity-40"
-            style={{ backgroundColor: "var(--acc0)" }}
+            style={{ width: "100%", "--md-filled-button-container-height": "48px" } as any}
           >
-            <MicIcon size={17} />
+            <span slot="icon"><MicIcon size={18} /></span>
             {voice.status === "requesting_mic" ? "Requesting Microphone…" : "Join Voice Channel"}
-          </button>
+          </md-filled-button>
         ) : (
           <div className="flex items-center gap-2">
             {/* Master Mic Mute/Unmute */}
-            <button
-              type="button"
+            <md-filled-tonal-button
               onClick={voice.toggleSelfMute}
               disabled={voice.hostMuted || !voice.canSpeak}
-              className={`flex h-12 flex-1 items-center justify-center gap-2 rounded-xl font-display text-xs font-bold transition-all border ${
-                voice.hostMuted
-                  ? "border-rose-500/40 bg-rose-500/15 text-rose-300 cursor-not-allowed"
-                  : !voice.canSpeak
-                  ? "border-amber-500/40 bg-amber-500/15 text-amber-300 cursor-not-allowed"
-                  : voice.selfMuted
-                  ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
-                  : "border-emerald-500/40 bg-emerald-500/20 text-emerald-300 shadow-sm"
-              }`}
+              style={{ flex: "1", "--md-filled-tonal-button-container-height": "48px" } as any}
             >
-              {voice.hostMuted ? (
-                <>
-                  <MicOffIcon size={16} /> Muted by Host
-                </>
-              ) : !voice.canSpeak ? (
-                <>
-                  <MicOffIcon size={16} /> Talk Disabled
-                </>
-              ) : voice.selfMuted ? (
-                <>
-                  <MicOffIcon size={16} /> Unmute Mic
-                </>
-              ) : (
-                <>
-                  <MicIcon size={16} /> Mic Active
-                </>
-              )}
-            </button>
+              <span slot="icon">
+                {voice.selfMuted ? <MicOffIcon size={18} /> : <MicIcon size={18} />}
+              </span>
+              {voice.hostMuted
+                ? "Muted by Host"
+                : !voice.canSpeak
+                ? "Talk Disabled"
+                : voice.selfMuted
+                ? "Unmute Mic"
+                : "Mic Active"}
+            </md-filled-tonal-button>
 
             {/* Leave Voice */}
-            <button
-              type="button"
+            <md-outlined-button
               onClick={handleToggleVoice}
-              className="flex h-12 items-center justify-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/15 px-4 font-display text-xs font-bold text-rose-300 hover:bg-rose-500/25 active:scale-[0.98] transition-all shrink-0"
+              style={{ "--md-outlined-button-container-height": "48px" } as any}
             >
-              <PhoneOffIcon size={16} />
+              <span slot="icon"><PhoneOffIcon size={16} /></span>
               Leave
-            </button>
+            </md-outlined-button>
           </div>
         )}
       </div>

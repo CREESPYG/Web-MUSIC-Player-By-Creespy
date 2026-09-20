@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import type { PlayerApi } from "../hooks/usePlayer";
 export type { PlayerApi };
 import { fmtTime } from "../lib/color";
@@ -16,9 +15,6 @@ import {
   VolumeIcon,
 } from "./Icons";
 import { LockIcon } from "./UiIcons";
-
-const sideBtn =
-  "grid h-11 w-11 place-items-center rounded-full text-[var(--dim)] transition-colors hover:bg-white/8 hover:text-white";
 
 interface RoomPerms {
   play_pause: boolean;
@@ -57,9 +53,6 @@ export function Controls({
 
   const formattedTime = fmtTime(shown);
   const formattedDuration = fmtTime(duration);
-
-  const toggleCls = (on: boolean) =>
-    cn(sideBtn, on && "bg-[var(--acc0)]/15 text-[var(--acc0)] hover:text-[var(--acc0)]");
 
   // Granular permission helpers
   const canPlayPause = !inRoom || !roomPerms || roomPerms.play_pause;
@@ -142,15 +135,13 @@ export function Controls({
       {/* Transport controls row */}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-y-4">
         {/* Left: Volume & Rate */}
-        <div className="order-2 flex items-center gap-1.5 sm:order-1">
-          <motion.button
-            whileTap={{ scale: 0.88 }}
-            onClick={player.toggleMute}
-            className={sideBtn}
+        <div className="order-2 flex items-center gap-1 sm:order-1">
+          <md-icon-button
             aria-label={player.muted ? "Unmute" : "Mute"}
+            onClick={player.toggleMute}
           >
-            {player.muted || player.volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}
-          </motion.button>
+            {player.muted || player.volume === 0 ? <MuteIcon size={18} /> : <VolumeIcon size={18} />}
+          </md-icon-button>
           <input
             type="range"
             min={0}
@@ -161,107 +152,75 @@ export function Controls({
             style={{ "--fill": `${player.muted ? 0 : player.volume}%` } as React.CSSProperties}
             aria-label="Volume"
           />
-          <motion.button
-            whileTap={{ scale: 0.92 }}
+          <md-filter-chip
+            label={`${player.rate}×`}
             onClick={player.cycleRate}
             title="Playback speed"
-            className="glass-soft ml-1 rounded-lg px-2 py-1 font-tmono text-[11px] text-[var(--dim)] transition-colors hover:text-[var(--acc0)]"
-          >
-            {player.rate}×
-          </motion.button>
+            style={{ "--md-filter-chip-container-height": "28px" } as React.CSSProperties}
+          />
         </div>
 
-        {/* Center: Main Playback Controls */}
+        {/* Center: Main Playback Controls with Material Web */}
         <div
           className={cn(
-            "order-1 flex w-full items-center justify-center gap-2 sm:order-2 sm:w-auto",
+            "order-1 flex w-full items-center justify-center gap-1 sm:order-2 sm:w-auto",
             !ready && "pointer-events-none opacity-50"
           )}
         >
-          <motion.button
-            whileTap={{ scale: 0.88 }}
-            whileHover={{ scale: 1.06 }}
-            onClick={player.cycleShuffle}
+          <md-icon-button
+            toggle
+            selected={player.shuffleMode !== "off"}
             disabled={!canShuffle}
-            className={cn(toggleCls(player.shuffleMode !== "off"), "relative", !canShuffle && "opacity-30 cursor-not-allowed pointer-events-none")}
+            onClick={player.cycleShuffle}
             title={!canShuffle ? "Host controls shuffle" : `Shuffle: ${player.shuffleMode}`}
             aria-label={`Shuffle mode ${player.shuffleMode}`}
           >
             <ShuffleIcon size={19} />
-            {player.shuffleMode === "magic" && (
-              <span
-                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--acc0)]"
-              />
-            )}
-          </motion.button>
+          </md-icon-button>
 
-          <motion.button
-            whileTap={{ scale: 0.88 }}
-            whileHover={{ scale: 1.06 }}
-            onClick={player.prev}
+          <md-icon-button
             disabled={!canPrev}
-            className={cn(sideBtn, !canPrev && "opacity-30 cursor-not-allowed")}
+            onClick={player.prev}
             title={!canPrev ? "Host controls previous" : "Previous"}
             aria-label="Previous"
           >
             <PrevIcon size={22} />
-          </motion.button>
+          </md-icon-button>
 
-          {/* Flat Nordic Material 3 FAB Play / Pause */}
+          {/* Official Google Material Web FAB */}
           <div className="relative mx-1.5 flex items-center justify-center">
-            <motion.button
-              whileHover={canPlayPause ? { scale: 1.04 } : {}}
-              whileTap={canPlayPause ? { scale: 0.94 } : {}}
-              onClick={canPlayPause ? player.toggle : undefined}
+            <md-fab
+              size="medium"
+              variant="primary"
               aria-label={player.playing ? "Pause" : "Play"}
+              disabled={!canPlayPause}
+              onClick={canPlayPause ? player.toggle : undefined}
               title={!canPlayPause ? "Host controls playback" : undefined}
-              className={cn(
-                "relative grid h-16 w-16 place-items-center rounded-full text-[#0d151c] shadow-sm transition-transform",
-                !canPlayPause && "cursor-not-allowed opacity-50"
-              )}
-              style={{
-                backgroundColor: "var(--acc0)",
-              }}
             >
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.span
-                  key={player.playing ? "pause" : "play"}
-                  initial={{ scale: 0.5, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.5, opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="grid place-items-center"
-                >
-                  {player.playing ? <PauseIcon size={28} /> : <PlayIcon size={28} className="ml-0.5" />}
-                </motion.span>
-              </AnimatePresence>
-            </motion.button>
+              <span slot="icon" className="grid place-items-center">
+                {player.playing ? <PauseIcon size={28} /> : <PlayIcon size={28} className="ml-0.5" />}
+              </span>
+            </md-fab>
           </div>
 
-          <motion.button
-            whileTap={{ scale: 0.88 }}
-            whileHover={{ scale: 1.06 }}
-            onClick={player.next}
+          <md-icon-button
             disabled={!canNext}
-            className={cn(sideBtn, !canNext && "opacity-30 cursor-not-allowed")}
+            onClick={player.next}
             title={!canNext ? "Host controls next" : "Next"}
             aria-label="Next"
           >
             <NextIcon size={22} />
-          </motion.button>
+          </md-icon-button>
 
-          <motion.button
-            whileTap={{ scale: 0.88 }}
-            whileHover={{ scale: 1.06 }}
+          <md-icon-button
+            toggle
+            selected={player.repeat !== "off"}
             onClick={player.cycleRepeat}
-            className={cn(toggleCls(player.repeat !== "off"), "relative")}
             aria-label="Repeat"
+            title={`Repeat: ${player.repeat}`}
           >
             {player.repeat === "one" ? <RepeatOneIcon size={19} /> : <RepeatIcon size={19} />}
-            {player.repeat === "off" && (
-              <span className="absolute bottom-1.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current opacity-60" />
-            )}
-          </motion.button>
+          </md-icon-button>
         </div>
 
         {/* Right: Mode status label */}

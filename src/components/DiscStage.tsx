@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { Track } from "../lib/trackModel";
 import type { Theme } from "../themes";
 import { beat } from "../hooks/useBeat";
+import { CavaEngine } from "../lib/cavaEngine";
 import { cn } from "../utils/cn";
 import { HeartIcon } from "./Icons";
 import { YouTubeMark, LyricsIcon, MicIcon } from "./UiIcons";
@@ -93,9 +94,13 @@ export function DiscStage({
 
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
     const N = barAngles.length;
+    const cavaEngine = new CavaEngine(N);
 
     const drawFrame = (now: number, isResting = false) => {
-      const b = isResting ? { bars: [] as any, level: 0, bass: 0, pulse: 0 } : beat.read(now);
+      const b = beat.read(now);
+      const resting = isResting || !playingRef.current;
+      const cavaBars = cavaEngine.update(b.bars, 0.016, resting);
+
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, S, S);
       const cx = S / 2;
@@ -104,7 +109,7 @@ export function DiscStage({
       const maxLen = S * 0.095; // perfectly contained within canvas bounds
 
       // 1. Dynamic Bass Shockwave Ring on kicks
-      if (!isResting && b.bass > 0.25) {
+      if (!resting && b.bass > 0.25) {
         const shockR = r0 + b.bass * (S * 0.07);
         ctx.beginPath();
         ctx.arc(cx, cy, shockR, 0, Math.PI * 2);
@@ -115,16 +120,17 @@ export function DiscStage({
         ctx.globalAlpha = 1.0;
       }
 
-      // 2. High-Energy 64-Band Material 3 Spectrum Halo
+      // 2. CAVA Monstercat-smoothed 64-Band Material 3 Spectrum Halo
       ctx.lineCap = "round";
       const lineWidth = Math.max(2.4, S * 0.012);
       ctx.lineWidth = lineWidth;
 
       for (let i = 0; i < N; i++) {
-        const v = isResting ? 0.06 : b.bars[i] || 0;
+        const bar = cavaBars[i];
+        const v = resting ? 0.05 : bar.value;
         const { cos, sin } = barAngles[i];
-        // Dynamic amplitude scaling: reactive to bass, volume & transients
-        const len = 3 + Math.min(maxLen, Math.pow(v, 1.1) * maxLen);
+        // Dynamic amplitude scaling with CAVA physics
+        const len = 3 + Math.min(maxLen, Math.pow(v, 1.05) * maxLen);
 
         const x1 = cx + cos * r0;
         const y1 = cy + sin * r0;
@@ -133,7 +139,7 @@ export function DiscStage({
 
         // Material 3 dynamic theme gradient
         const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        const alpha = isResting ? 0.28 : Math.min(1.0, 0.45 + v * 0.55);
+        const alpha = resting ? 0.28 : Math.min(1.0, 0.45 + v * 0.55);
         grad.addColorStop(0, theme.acc0);
         grad.addColorStop(1, theme.acc1);
 
@@ -144,10 +150,14 @@ export function DiscStage({
         ctx.lineTo(x2, y2);
         ctx.stroke();
 
-        // Tip dot on transients
-        if (!isResting && v > 0.45) {
+        // CAVA Floating Peak Cap Spark
+        if (!resting && bar.peak > 0.2) {
+          const peakLen = 3 + Math.min(maxLen + 2, Math.pow(bar.peak, 1.05) * maxLen);
+          const px = cx + cos * (r0 + peakLen);
+          const py = cy + sin * (r0 + peakLen);
+
           ctx.beginPath();
-          ctx.arc(x2, y2, Math.min(2.5, lineWidth * 0.65), 0, Math.PI * 2);
+          ctx.arc(px, py, Math.min(2.5, lineWidth * 0.6), 0, Math.PI * 2);
           ctx.fillStyle = theme.ink;
           ctx.fill();
         }

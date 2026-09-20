@@ -8,6 +8,63 @@
 
 :root {
   color-scheme: dark;
+
+  /* ---------- Google Material Web (M3) Design Tokens ---------- */
+  --md-sys-color-primary: var(--acc0);
+  --md-sys-color-on-primary: #0d151c;
+  --md-sys-color-primary-container: color-mix(in srgb, var(--acc0) 18%, transparent);
+  --md-sys-color-on-primary-container: var(--acc0);
+
+  --md-sys-color-secondary: var(--acc1);
+  --md-sys-color-on-secondary: #0d151c;
+  --md-sys-color-secondary-container: color-mix(in srgb, var(--acc1) 16%, transparent);
+  --md-sys-color-on-secondary-container: var(--acc1);
+
+  --md-sys-color-tertiary: var(--acc2);
+  --md-sys-color-on-tertiary: #0d151c;
+
+  --md-sys-color-surface: var(--bg0, #0e131a);
+  --md-sys-color-on-surface: var(--ink, #e5edf5);
+  --md-sys-color-surface-variant: color-mix(in srgb, var(--bg1, #161e28) 85%, transparent);
+  --md-sys-color-on-surface-variant: var(--dim, #8295ad);
+
+  --md-sys-color-surface-container-lowest: #0a0e13;
+  --md-sys-color-surface-container-low: #0f151c;
+  --md-sys-color-surface-container: var(--bg1, #161e28);
+  --md-sys-color-surface-container-high: color-mix(in srgb, var(--bg1, #161e28) 88%, #fff 12%);
+  --md-sys-color-surface-container-highest: color-mix(in srgb, var(--bg1, #161e28) 78%, #fff 22%);
+
+  --md-sys-color-outline: rgba(255, 255, 255, 0.12);
+  --md-sys-color-outline-variant: rgba(255, 255, 255, 0.08);
+
+  --md-sys-shape-corner-full: 9999px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-small: 8px;
+
+  --md-ref-typeface-brand: "Rubik", sans-serif;
+  --md-ref-typeface-plain: "Rubik", sans-serif;
+
+  /* Material Web component token overrides */
+  --md-fab-container-color: var(--acc0);
+  --md-fab-icon-color: #0d151c;
+  --md-fab-container-shape: 9999px;
+  --md-icon-button-icon-color: var(--dim);
+  --md-icon-button-hover-icon-color: var(--ink);
+  --md-icon-button-selected-icon-color: var(--acc0);
+  --md-filled-button-container-color: var(--acc0);
+  --md-filled-button-label-text-color: #0d151c;
+  --md-filled-button-container-shape: 9999px;
+  --md-filled-tonal-button-container-color: color-mix(in srgb, var(--acc0) 18%, transparent);
+  --md-filled-tonal-button-label-text-color: var(--acc0);
+  --md-filled-tonal-button-container-shape: 9999px;
+  --md-filter-chip-container-shape: 9999px;
+  --md-assist-chip-container-shape: 9999px;
+  --md-filter-chip-selected-container-color: color-mix(in srgb, var(--acc0) 20%, transparent);
+  --md-filter-chip-selected-label-text-color: var(--acc0);
+  --md-slider-active-track-color: var(--acc0);
+  --md-slider-handle-color: var(--acc0);
 }
 
 html,

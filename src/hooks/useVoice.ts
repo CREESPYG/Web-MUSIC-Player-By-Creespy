@@ -315,11 +315,10 @@ export function useVoice({
   const setAudioOutputDevice = useCallback(async (deviceId: string) => {
     setSelectedOutput(deviceId);
     try {
-      const ctx = await rtcRef.current?.ensureAudioContext();
-      if (ctx && "setSinkId" in ctx) {
-        await (ctx as any).setSinkId(deviceId);
-        onToast("Audio output switched");
+      if (rtcRef.current) {
+        await rtcRef.current.setAudioOutputSink(deviceId);
       }
+      onToast("Audio output switched");
     } catch {
       onToast("Speaker output selection not supported in this browser");
     }

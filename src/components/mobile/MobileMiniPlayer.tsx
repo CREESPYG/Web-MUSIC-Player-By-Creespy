@@ -68,11 +68,11 @@ export function MobileMiniPlayer({ track, player, liked, onLike, onOpenPlayer }:
         <button
           type="button"
           onClick={player.toggle}
-          className="grid h-8 w-8 place-items-center rounded-full font-bold text-black shadow-md transition-transform active:scale-90"
-          style={{ background: "var(--acc0)" }}
+          className="grid h-8 w-8 place-items-center rounded-full font-bold text-[#0d151c] shadow-sm transition-transform active:scale-90"
+          style={{ backgroundColor: "var(--acc0)" }}
           aria-label={player.playing ? "Pause" : "Play"}
         >
-          {player.playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+          {player.playing ? <PauseIcon size={14} /> : <PlayIcon size={14} className="ml-0.5" />}
         </button>
 
         {/* Next */}

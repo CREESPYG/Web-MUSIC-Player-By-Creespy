@@ -24,7 +24,7 @@ interface Props {
   showLyrics?: boolean;
 }
 
-const R = 98;
+const R = 78;
 const C = 2 * Math.PI * R;
 
 export function DiscStage({
@@ -100,42 +100,42 @@ export function DiscStage({
       ctx.clearRect(0, 0, S, S);
       const cx = S / 2;
       const cy = S / 2;
-      const r0 = S * 0.388; // outer rim of disc
+      const r0 = S * 0.395; // outer rim of disc & progress circle
+      const maxLen = S * 0.095; // perfectly contained within canvas bounds
 
       // 1. Dynamic Bass Shockwave Ring on kicks
-      if (!isResting && b.bass > 0.3) {
-        const shockR = r0 + b.bass * (S * 0.08);
+      if (!isResting && b.bass > 0.25) {
+        const shockR = r0 + b.bass * (S * 0.07);
         ctx.beginPath();
         ctx.arc(cx, cy, shockR, 0, Math.PI * 2);
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 1.6;
         ctx.strokeStyle = theme.acc0;
-        ctx.globalAlpha = Math.min(0.55, b.bass * 0.6);
+        ctx.globalAlpha = Math.min(0.6, b.bass * 0.7);
         ctx.stroke();
         ctx.globalAlpha = 1.0;
       }
 
-      // 2. High-Energy 64-Band Material You Spectrum Halo
+      // 2. High-Energy 64-Band Material 3 Spectrum Halo
       ctx.lineCap = "round";
-      const lineWidth = Math.max(2.4, S * 0.011);
+      const lineWidth = Math.max(2.4, S * 0.012);
       ctx.lineWidth = lineWidth;
 
       for (let i = 0; i < N; i++) {
         const v = isResting ? 0.06 : b.bars[i] || 0;
         const { cos, sin } = barAngles[i];
         // Dynamic amplitude scaling: reactive to bass, volume & transients
-        const len = 4 + Math.pow(v, 1.15) * (S * 0.16);
+        const len = 3 + Math.min(maxLen, Math.pow(v, 1.1) * maxLen);
 
         const x1 = cx + cos * r0;
         const y1 = cy + sin * r0;
         const x2 = cx + cos * (r0 + len);
         const y2 = cy + sin * (r0 + len);
 
-        // Material You dynamic theme gradient
+        // Material 3 dynamic theme gradient
         const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        const alpha = isResting ? 0.25 : Math.min(1.0, 0.45 + v * 0.55);
+        const alpha = isResting ? 0.28 : Math.min(1.0, 0.45 + v * 0.55);
         grad.addColorStop(0, theme.acc0);
-        grad.addColorStop(0.65, theme.acc1);
-        grad.addColorStop(1, theme.acc2);
+        grad.addColorStop(1, theme.acc1);
 
         ctx.globalAlpha = alpha;
         ctx.strokeStyle = grad;
@@ -144,11 +144,11 @@ export function DiscStage({
         ctx.lineTo(x2, y2);
         ctx.stroke();
 
-        // Glowing spark tip on strong transients
-        if (!isResting && v > 0.42) {
+        // Tip dot on transients
+        if (!isResting && v > 0.45) {
           ctx.beginPath();
           ctx.arc(x2, y2, Math.min(2.5, lineWidth * 0.65), 0, Math.PI * 2);
-          ctx.fillStyle = "#ffffff";
+          ctx.fillStyle = theme.ink;
           ctx.fill();
         }
       }
@@ -226,18 +226,18 @@ export function DiscStage({
           size === "lg" ? "w-[min(72vw,38vh,360px)]" : "w-[min(50vw,28vh,260px)]"
         )}
       >
-        <canvas ref={canvasRef} className="absolute inset-0 h-full w-full pointer-events-none" aria-hidden />
+        <canvas ref={canvasRef} className="absolute inset-0 h-full w-full pointer-events-none z-10" aria-hidden />
 
         {/* Circular Progress & Buffer SVG */}
-        <svg viewBox="0 0 200 200" className="absolute inset-0 h-full w-full -rotate-90 pointer-events-none">
-          <circle cx="100" cy="100" r={R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2" />
+        <svg viewBox="0 0 200 200" className="absolute inset-0 h-full w-full -rotate-90 pointer-events-none z-10">
+          <circle cx="100" cy="100" r={R} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2.5" />
           <circle
             cx="100"
             cy="100"
             r={R}
             fill="none"
-            stroke="rgba(255,255,255,0.14)"
-            strokeWidth="2"
+            stroke="rgba(255,255,255,0.2)"
+            strokeWidth="2.5"
             strokeLinecap="round"
             strokeDasharray={C}
             strokeDashoffset={C * (1 - buffered)}
@@ -248,7 +248,7 @@ export function DiscStage({
             r={R}
             fill="none"
             stroke="var(--acc0)"
-            strokeWidth="2.5"
+            strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={C}
             strokeDashoffset={C * (1 - progress)}

@@ -1,17 +1,6 @@
-const CACHE_NAME = "creep-creep-cache-v1";
-const STATIC_ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/icon.svg"
-];
+const CACHE_NAME = "creep-creep-m3-v4";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
   self.skipWaiting();
 });
 
@@ -39,34 +28,39 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("googlevideo.com") ||
     url.hostname.includes("open-meteo.com") ||
     url.hostname.includes("spotify.com") ||
+    url.hostname.includes("lrclib.net") ||
+    url.pathname.startsWith("/api/") ||
     event.request.method !== "GET"
   ) {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) {
-        // Return cached and fetch in background for update
-        fetch(event.request)
-          .then((response) => {
-            if (response && response.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response));
-            }
-          })
-          .catch(() => {});
-        return cached;
-      }
-      return fetch(event.request).then((response) => {
-        if (!response || response.status !== 200 || response.type !== "basic") {
+  // ALWAYS Network-first for navigation/HTML documents to eliminate stale cached builds
+  if (event.request.mode === "navigate" || event.request.destination === "document" || url.pathname === "/" || url.pathname === "/index.html") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
           return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Network-first for hashed assets with fallback to cache
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200 && response.type === "basic") {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
-        const responseToCache = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(event.request))
   );
 });

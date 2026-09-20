@@ -9,13 +9,24 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>
 );
 
-// Register PWA Service Worker
-if (typeof window !== "undefined" && "serviceWorker" in navigator && process.env.NODE_ENV === "production") {
+// Register & automatically update PWA Service Worker
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  // Clear legacy caches if present
+  if ("caches" in window) {
+    caches.keys().then((keys) => {
+      for (const k of keys) {
+        if (k.startsWith("creep-creep-cache-v1")) {
+          caches.delete(k);
+        }
+      }
+    });
+  }
+
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")
       .then((reg) => {
-        console.log("PWA Service Worker registered:", reg.scope);
+        reg.update();
       })
       .catch((err) => {
         console.warn("PWA Service Worker registration skipped:", err);

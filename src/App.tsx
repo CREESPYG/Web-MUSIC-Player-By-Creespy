@@ -35,6 +35,7 @@ import { RippleLayer } from "./components/RippleLayer";
 import { MediaLayer } from "./components/MediaLayer";
 import { TopBar, type ViewMode } from "./components/TopBar";
 import { DiscStage } from "./components/DiscStage";
+import { AudioSpectrumStrip } from "./components/AudioSpectrumStrip";
 import { LyricsView } from "./components/LyricsView";
 import { Controls } from "./components/Controls";
 import { Playlist } from "./components/Playlist";
@@ -65,7 +66,17 @@ export default function App() {
   useEffect(() => () => toastTimersRef.current.forEach(window.clearTimeout), []);
 
   /* ---------------- theme ---------------- */
-  const [themeId, setThemeId] = useState<string>(() => localStorage.getItem("ripple-theme") || THEMES[0].id);
+  const [themeId, setThemeId] = useState<string>(() => {
+    const saved = localStorage.getItem("ripple-theme");
+    const legacy = ["abyss", "ember", "verdant", "orchid", "neon-pink", "cyber-lime", "hyper-violet"];
+    if (!saved || legacy.includes(saved)) {
+      try {
+        localStorage.setItem("ripple-theme", "nordic-material");
+      } catch {}
+      return "nordic-material";
+    }
+    return THEMES.some((t) => t.id === saved) ? saved : "nordic-material";
+  });
   const theme = THEMES.find((t) => t.id === themeId) ?? THEMES[0];
   const applyTheme = useCallback((id: string) => {
     setThemeId(id);
@@ -233,7 +244,13 @@ export default function App() {
   const player = usePlayer(tracks, pushToast, () => topUpSimilar(false));
   playerRef.current = player;
   const track = tracks[player.index] ?? tracks[0];
-  useBeatDriver(player.playing, track?.bpm ?? 110, track?.seed ?? 1, player.time, player.muted ? 0 : player.volume);
+  useBeatDriver(
+    player.playing,
+    track?.bpm ?? 110,
+    track?.seed ?? 1,
+    player.time,
+    (player.muted ? 0 : player.volume) / 100
+  );
 
   /* ---------------- native Android audio bridge ---------------- */
   useNativeAudioBridge(
@@ -937,6 +954,7 @@ export default function App() {
                   showLyrics={showLyrics}
                 />
               )}
+              <AudioSpectrumStrip playing={player.playing} theme={effectiveTheme} />
               <Controls
                 player={player}
                 locked={controlsLocked}

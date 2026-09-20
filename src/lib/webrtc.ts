@@ -70,6 +70,7 @@ export class WebRtcVoiceManager {
   private keepAliveRelease: (() => void) | null = null;
   private reconnectTimers = new Map<string, number>();
   private onVisibilityChange: (() => void) | null = null;
+  private currentSinkId: string = "";
 
   // Local Voice Permissions & State
   public canSpeak: boolean = true;
@@ -141,20 +142,20 @@ export class WebRtcVoiceManager {
     return this.peers.get(userId);
   }
 
-  /** Start local microphone stream */
+  /** Start local microphone stream with robust device fallback */
   public async startMicrophone(deviceId?: string): Promise<MediaStream> {
     await this.ensureAudioContext();
     this.startKeepAlive();
 
-    const constraints: MediaStreamConstraints = {
+    const buildConstraints = (devId?: string): MediaStreamConstraints => ({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        ...(devId && devId !== "default" && devId !== "communications" ? { deviceId: { ideal: devId } } : {}),
       },
       video: false,
-    };
+    });
 
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
@@ -162,10 +163,20 @@ export class WebRtcVoiceManager {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(buildConstraints(deviceId));
+      } catch (err: any) {
+        if (deviceId) {
+          // If specific deviceId fails or is overconstrained, fallback to default audio
+          stream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+        } else {
+          throw err;
+        }
+      }
       this.localStream = stream;
 
-      // Setup local audio analyzer
+      // Setup local audio analyzer for speaking monitor
       if (this.audioContext) {
         try {
           const source = this.audioContext.createMediaStreamSource(stream);
@@ -445,7 +456,19 @@ export class WebRtcVoiceManager {
     }
   }
 
-  /** Setup direct HTMLAudioElement output sink for background tab survival */
+  /** Set audio output sink device across all remote peer audio elements */
+  public async setAudioOutputSink(sinkId: string) {
+    this.currentSinkId = sinkId;
+    for (const [_, node] of this.peerAudio) {
+      if (node.audioElement && typeof (node.audioElement as any).setSinkId === "function") {
+        try {
+          await (node.audioElement as any).setSinkId(sinkId);
+        } catch {}
+      }
+    }
+  }
+
+  /** Setup direct native HTMLAudioElement output routing for desktop & mobile playback */
   private async setupRemoteAudio(userId: string, stream: MediaStream) {
     const ctx = await this.ensureAudioContext();
 
@@ -461,7 +484,8 @@ export class WebRtcVoiceManager {
     if (existing?.gainNode) existing.gainNode.disconnect();
     if (existing?.analyserNode) existing.analyserNode.disconnect();
 
-    // Attach to HTMLAudioElement as the primary playback sink for uninterrupted background playback
+    // 1. Primary Native HTMLAudioElement for 100% reliable hardware audio playback.
+    // Native audio tags handle WebRTC jitter buffers, hardware echo cancellation, and OS routing cleanly on desktop & mobile.
     let audioEl = existing?.audioElement;
     if (!audioEl) {
       audioEl = document.createElement("audio");
@@ -476,72 +500,68 @@ export class WebRtcVoiceManager {
       audioEl.style.bottom = "0";
       document.body.appendChild(audioEl);
     }
-    audioEl.srcObject = stream;
+    if (this.currentSinkId && typeof (audioEl as any).setSinkId === "function") {
+      (audioEl as any).setSinkId(this.currentSinkId).catch(() => {});
+    }
 
-    // Web Audio pipeline: source → gain → analyser
-    // The gainNode allows volume above 1.0 (100%) up to 1.5 (150%).
-    // The audioElement is the primary audio output (works in background).
+    audioEl.srcObject = stream;
+    const isMuted = !this.canHear || (existing ? existing.locallyMuted : false);
+    audioEl.muted = isMuted;
+    audioEl.volume = isMuted ? 0 : Math.max(0, Math.min(1.0, savedVol / 100));
+
+    const playPromise = audioEl.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        const resumeOnInteraction = () => {
+          audioEl?.play().catch(() => {});
+          window.removeEventListener("click", resumeOnInteraction);
+          window.removeEventListener("keydown", resumeOnInteraction);
+          window.removeEventListener("touchstart", resumeOnInteraction);
+        };
+        window.addEventListener("click", resumeOnInteraction, { once: true, passive: true });
+        window.addEventListener("keydown", resumeOnInteraction, { once: true, passive: true });
+        window.addEventListener("touchstart", resumeOnInteraction, { once: true, passive: true });
+      });
+    }
+
+    // 2. Web Audio Analyser Node strictly for speaking visualizer (RMS)
+    // We connect source -> analyser ONLY. It does NOT connect to ctx.destination to prevent double-playback and bypass Chromium WebAudio destination silence bugs.
     let source: MediaStreamAudioSourceNode | undefined;
-    let gainNode: GainNode | undefined;
     let analyser: AnalyserNode | undefined;
     try {
       source = ctx.createMediaStreamSource(stream);
-      gainNode = ctx.createGain();
       analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.4;
-      source.connect(gainNode);
-      gainNode.connect(analyser);
-    } catch {
-      // AudioContext might still be initializing on some platforms
-    }
+      source.connect(analyser);
+    } catch {}
 
     const peerNode: PeerAudioNode = {
       userId,
       stream,
       sourceNode: source,
-      gainNode,
       analyserNode: analyser,
       audioElement: audioEl,
       volume: savedVol,
-      locallyMuted: false,
+      locallyMuted: existing ? existing.locallyMuted : false,
     };
 
     this.peerAudio.set(userId, peerNode);
     this.updatePeerGain(userId);
   }
 
-  /** Update gain for a peer: uses HTMLAudioElement for 0-100%, gainNode for 100-150% */
+  /** Update gain for a peer: controls native audio element volume and mute states */
   public updatePeerGain(userId: string) {
     const node = this.peerAudio.get(userId);
     if (!node) return;
 
     const muted = !this.canHear || node.locallyMuted;
 
-    // HTMLAudioElement controls whether audio plays at all (and handles background tabs)
-    const audioEl = node.audioElement;
-    if (audioEl) {
-      if (muted) {
-        audioEl.muted = true;
-        audioEl.volume = 0;
-      } else {
-        audioEl.muted = false;
-        // Cap audioEl volume at 1.0; for >100% we boost with gainNode
-        const elVol = Math.max(0, Math.min(1.0, node.volume / 100));
-        audioEl.volume = elVol;
-      }
-      if (audioEl.paused && !muted) {
-        audioEl.play().catch(() => {});
-      }
-    }
-
-    // gainNode provides amplification for volumes above 100%
-    if (node.gainNode) {
-      if (muted) {
-        node.gainNode.gain.setTargetAtTime(0, node.gainNode.context.currentTime, 0.01);
-      } else {
-        const gain = node.volume / 100; // 0.0 – 1.5
-        node.gainNode.gain.setTargetAtTime(gain, node.gainNode.context.currentTime, 0.01);
+    if (node.audioElement) {
+      node.audioElement.muted = muted;
+      node.audioElement.volume = muted ? 0 : Math.max(0, Math.min(1.0, node.volume / 100));
+      if (!muted && node.audioElement.paused) {
+        node.audioElement.play().catch(() => {});
       }
     }
   }

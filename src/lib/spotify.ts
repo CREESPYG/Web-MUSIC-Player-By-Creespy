@@ -397,65 +397,86 @@ function cachedMatchSet(title: string, artist: string, videoId: string | null): 
  * Immediately resolves the first few tracks to YouTube video IDs,
  * while leaving remaining tracks ready with their metadata and cover art.
  */
+const MAX_CONCURRENT_MATCHES = 6;
+
+async function resolveOneSpotifyTrack(
+  s: SpotifyTrackInfo,
+  playlistTitle: string,
+  i: number,
+  slots: (Track | null)[]
+): Promise<void> {
+  const c = cachedMatchGet(s.title, s.artist);
+  let videoId: string | null = null;
+  if (c.hit) {
+    videoId = c.videoId;
+  } else {
+    try {
+      videoId = await matchTrackToYouTube(s.title, s.artist);
+    } catch {
+      /* skip on network error */
+    }
+    cachedMatchSet(s.title, s.artist, videoId);
+  }
+  if (!videoId) return;
+
+  // Per-song cover art comes from the matched video's own thumbnail,
+  // NOT the playlist cover applied to every song.
+  const art = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+  const trk: Track = {
+    id: `sp-${Date.now()}-${i}`,
+    videoId,
+    title: s.title,
+    artist: s.artist,
+    album: playlistTitle,
+    duration: s.duration || 180,
+    thumb: art,
+    artwork: art,
+    coverUrl: art,
+    sourceType: "spotify",
+    sourceUrl: s.spotifyUri || `https://open.spotify.com/search/${encodeURIComponent(`${s.artist} ${s.title}`)}`,
+    source: "custom",
+    tag: `Spotify · ${playlistTitle.slice(0, 18)}`,
+    bpm: 100,
+    seed: i + 1,
+    addedAt: Date.now(),
+  };
+
+  slots[i] = trk;
+}
+
 export async function convertSpotifyTracksToPlayerTracks(
   spotifyTracks: SpotifyTrackInfo[],
   playlistTitle: string,
   onResolveProgress?: (done: number, total: number) => void
 ): Promise<Track[]> {
-  const tracks: Track[] = [];
   const total = spotifyTracks.length;
+  if (total === 0) {
+    onResolveProgress?.(0, 0);
+    return [];
+  }
+  onResolveProgress?.(0, total);
 
-  for (let i = 0; i < spotifyTracks.length; i++) {
-    const s = spotifyTracks[i];
-    onResolveProgress?.(i, total);
+  // One slot per track index preserves the ORIGINAL playlist order even
+  // though parallel searches resolve out of order. Null = that track proved
+  // unmatchable on YouTube (strictly skipped, per requirement).
+  const slots: (Track | null)[] = new Array<Track | null>(total).fill(null);
 
-    // Cache consult FIRST: if we already verified this exact song against
-    // YouTube (hit OR proven-unmatchable), reuse it — ZERO network today.
-    const c = cachedMatchGet(s.title, s.artist);
-    let videoId: string | null = null;
-    if (c.hit) {
-      videoId = c.videoId;
-    } else {
-      // Strictly match this exact song to a real YouTube video.
-      // If the original track can't be found on YouTube, SKIP it instead
-      // of importing an unplayable placeholder (per user requirement).
-      try {
-        videoId = await matchTrackToYouTube(s.title, s.artist);
-      } catch {
-        /* skip on network error */
-      }
-      // Remember the verified answer (hit OR "proven missing") so the 2nd
-      // import of this playlist / repeat song is a single Map.get, not a search.
-      cachedMatchSet(s.title, s.artist, videoId);
+  let next = 0;
+  let doneCount = 0;
+
+  async function worker(): Promise<void> {
+    while (next < total) {
+      const i = next++;
+      await resolveOneSpotifyTrack(spotifyTracks[i], playlistTitle, i, slots);
+      doneCount++;
+      onResolveProgress?.(doneCount, total);
     }
-    if (!videoId) continue;
-
-    // Per-song cover art comes from the matched video's own thumbnail,
-    // NOT the playlist cover applied to every song.
-    const art = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-    const trk: Track = {
-      id: `sp-${Date.now()}-${i}`,
-      videoId,
-      title: s.title,
-      artist: s.artist,
-      album: playlistTitle,
-      duration: s.duration || 180,
-      thumb: art,
-      artwork: art,
-      coverUrl: art,
-      sourceType: "spotify",
-      sourceUrl: s.spotifyUri || `https://open.spotify.com/search/${encodeURIComponent(`${s.artist} ${s.title}`)}`,
-      source: "custom",
-      tag: `Spotify · ${playlistTitle.slice(0, 18)}`,
-      bpm: 100,
-      seed: i + 1,
-      addedAt: Date.now(),
-    };
-
-    tracks.push(trk);
   }
 
+  const n = Math.min(MAX_CONCURRENT_MATCHES, total);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+
   onResolveProgress?.(total, total);
-  return tracks;
+  return slots.filter((t): t is Track => t !== null);
 }

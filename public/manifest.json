@@ -1,0 +1,18 @@
+{
+  "name": "CREEP CREEP — Music Player",
+  "short_name": "CREEP CREEP",
+  "description": "An immersive animated glassmorphism music player with music-synced visuals and live rooms.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#040913",
+  "theme_color": "#040913",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

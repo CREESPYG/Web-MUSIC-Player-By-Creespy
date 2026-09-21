@@ -1,0 +1,1444 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
+import {
+  DIRECTORY_CHANNEL,
+  HOST_ONLY_PERMS,
+  SHARED_PERMS,
+  genRoomCode,
+  lobbyChannel,
+  roomChannel,
+  saveNickname,
+  savedNickname,
+  userId,
+  getTabSessionId,
+  saveRoomSession,
+  loadRoomSession,
+  clearRoomSession,
+  readInviteCode,
+  type ChatMsg,
+  type ConnState,
+  type JoinRequest,
+  type Member,
+  type MemberRole,
+  type MemberState,
+  type Permissions,
+  type PlaybackState,
+  type PublicControl,
+  type PublicRoomEntry,
+  type RoomInfo,
+  type RoomStatus,
+  type RoomType,
+} from "../lib/room";
+import { useVoice } from "./useVoice";
+import { backgroundKeepAlive } from "../lib/backgroundKeepAlive";
+
+/** Request browser notification permission if not yet granted */
+function requestNotificationPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+/** Send a browser notification for a chat message (only when page not focused) */
+function notifyChatMessage(msg: ChatMsg, roomName: string) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  if (document.hasFocus()) return;
+  if (document.visibilityState === "visible" && document.hasFocus()) return;
+
+  try {
+    const n = new Notification(`${msg.nickname} in ${roomName}`, {
+      body: msg.message.slice(0, 200),
+      icon: "/cover-placeholder.jpg",
+      tag: `chat-${msg.id}`,
+    });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+    setTimeout(() => n.close(), 6000);
+  } catch {}
+}
+
+/** Create a system chat message (visible to all, not from a real user) */
+function systemMsg(text: string): ChatMsg {
+  return {
+    id: `sys-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+    userId: "__system__",
+    nickname: "System",
+    message: text,
+    ts: Date.now(),
+    system: true,
+  };
+}
+
+export interface RoomHandlers {
+  /** Read the current local playback so the host can broadcast it. */
+  getPlayback: () => Omit<PlaybackState, "ts" | "by"> | null;
+  /** Apply a remote playback state to the local player (members). */
+  applyPlayback: (pb: PlaybackState) => void;
+  /** Read current queue tracks for syncing to new joiners */
+  getQueue?: () => any[];
+  /** Apply remote queue changes */
+  applyQueue?: (queue: any[]) => void;
+  /** Toast callback for notifications */
+  onToast?: (msg: string) => void;
+}
+
+interface CreateOpts {
+  name: string;
+  type: RoomType;
+  requireApproval: boolean;
+  control: PublicControl;
+  chatEnabled?: boolean;
+  voiceEnabled?: boolean;
+}
+
+const HEARTBEAT_MS = 4000;
+
+export function useRoom(handlers: RoomHandlers) {
+  const me = useRef(userId());
+  const hRef = useRef(handlers);
+  hRef.current = handlers;
+
+  const [status, setStatus] = useState<RoomStatus>("idle");
+  const [room, setRoom] = useState<RoomInfo | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [requests, setRequests] = useState<JoinRequest[]>([]);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const chatRef = useRef<ChatMsg[]>(chat);
+  chatRef.current = chat;
+  const [permissions, setPermissions] = useState<Permissions>(HOST_ONLY_PERMS);
+  const [connection, setConnection] = useState<ConnState>("offline");
+  const [nickname, setNickname] = useState(savedNickname());
+  const [banned] = useState<Set<string>>(() => new Set());
+  const [publicRooms, setPublicRooms] = useState<PublicRoomEntry[]>([]);
+  const [activeChannel, setActiveChannel] = useState<RealtimeChannel | null>(null);
+
+  const roomRef = useRef<RoomInfo | null>(null);
+  roomRef.current = room;
+  const permRef = useRef<Permissions>(permissions);
+  permRef.current = permissions;
+  const statusRef = useRef<RoomStatus>(status);
+  statusRef.current = status;
+
+  const lobbyRef = useRef<RealtimeChannel | null>(null);
+  const chanRef = useRef<RealtimeChannel | null>(null);
+  const dirRef = useRef<RealtimeChannel | null>(null);
+  const beatRef = useRef<number>(0);
+  const banRef = useRef(banned);
+  const joinTimersRef = useRef<number[]>([]);
+  const tabSessionId = useRef(getTabSessionId());
+  const memberCacheRef = useRef<Map<string, { member: Member; lastSeen: number }>>(new Map());
+  const membersRef = useRef<Member[]>(members);
+  membersRef.current = members;
+  const isRecoveringRef = useRef(false);
+  const publicRoomsCacheRef = useRef<Map<string, PublicRoomEntry>>(new Map());
+
+  const isOwner = room?.hostId === me.current;
+  const myRole: MemberRole = useMemo(() => {
+    if (room?.hostId === me.current) return "owner";
+    const found = members.find((m) => m.id === me.current);
+    if (found?.role === "host") return "host";
+    return "member";
+  }, [room?.hostId, members]);
+
+  const isHost = isOwner || myRole === "host";
+
+  /* ---------- Voice Engine ---------- */
+  const voice = useVoice({
+    roomId: room?.code || null,
+    channel: activeChannel,
+    myUserId: me.current,
+    myNickname: nickname,
+    myRole,
+    voiceEnabled: room?.voiceEnabled ?? true,
+    members,
+    onToast: (msg) => {
+      hRef.current.onToast?.(msg);
+    },
+  });
+
+  /* ---------- public rooms directory (always-on, read for everyone) ---------- */
+  const syncDirectory = useCallback((ch: RealtimeChannel) => {
+    const state = ch.presenceState() as Record<string, any[]>;
+    const now = Date.now();
+    const activePresenceCodes = new Set<string>();
+
+    Object.values(state).forEach((metas) => {
+      const m = (metas?.[0] ?? {}) as any;
+      if (m?.code) {
+        const cleanCode = String(m.code).trim().toUpperCase();
+        if (!cleanCode) return;
+        activePresenceCodes.add(cleanCode);
+        const entryAt = Number(m.at) || now;
+        const existing = publicRoomsCacheRef.current.get(cleanCode);
+        // Deduplicate: If multiple presences exist for the same room code, take the newest
+        if (!existing || entryAt >= existing.at) {
+          publicRoomsCacheRef.current.set(cleanCode, {
+            code: cleanCode,
+            name: m.name || `${m.hostName || "Host"}'s Room`,
+            hostName: m.hostName || "Host",
+            count: Math.max(1, m.count ?? 1),
+            requireApproval: !!m.requireApproval,
+            at: entryAt,
+          });
+        }
+      }
+    });
+
+    // Prune entries from cache only if they have been absent from presence for >60s
+    publicRoomsCacheRef.current.forEach((entry, code) => {
+      if (!activePresenceCodes.has(code) && now - entry.at > 60000) {
+        publicRoomsCacheRef.current.delete(code);
+      }
+    });
+
+    const list = Array.from(publicRoomsCacheRef.current.values());
+    list.sort((a, b) => b.count - a.count || a.at - b.at);
+    setPublicRooms(list);
+  }, []);
+
+  useEffect(() => {
+    const dir = supabase.channel(DIRECTORY_CHANNEL, {
+      config: { presence: { key: me.current }, broadcast: { self: false } },
+    });
+    dirRef.current = dir;
+
+    // Standard Phoenix Presence sync
+    dir.on("presence", { event: "sync" }, () => syncDirectory(dir));
+    dir.on("presence", { event: "join" }, () => syncDirectory(dir));
+    dir.on("presence", { event: "leave" }, () => syncDirectory(dir));
+
+    // 1. Instant broadcast updates when a room is created/updated by a host (<50ms)
+    dir.on("broadcast", { event: "directory_update" }, ({ payload }) => {
+      const entry = payload?.entry as PublicRoomEntry | undefined;
+      if (!entry || !entry.code) return;
+      const cleanCode = String(entry.code).trim().toUpperCase();
+      publicRoomsCacheRef.current.set(cleanCode, { ...entry, code: cleanCode, at: Date.now() });
+      const list = Array.from(publicRoomsCacheRef.current.values());
+      list.sort((a, b) => b.count - a.count || a.at - b.at);
+      setPublicRooms(list);
+    });
+
+    // 2. Instant broadcast deletion when a room is closed or demoted (<50ms)
+    dir.on("broadcast", { event: "directory_remove" }, ({ payload }) => {
+      const code = payload?.code ? String(payload.code).trim().toUpperCase() : "";
+      if (!code) return;
+      publicRoomsCacheRef.current.delete(code);
+      const list = Array.from(publicRoomsCacheRef.current.values());
+      list.sort((a, b) => b.count - a.count || a.at - b.at);
+      setPublicRooms(list);
+    });
+
+    // 3. Fast directory discovery query: newly subscribed clients ask active hosts to identify themselves
+    dir.on("broadcast", { event: "directory_query" }, () => {
+      const r = roomRef.current;
+      if (statusRef.current === "hosting" && r && r.type === "public" && r.hostId === me.current) {
+        dir.send({
+          type: "broadcast",
+          event: "directory_update",
+          payload: {
+            entry: {
+              code: r.code,
+              name: r.name,
+              hostName: r.hostName,
+              count: Math.max(1, membersRef.current?.length || 1),
+              requireApproval: r.requireApproval,
+              at: Date.now(),
+            },
+          },
+        }).catch(() => {});
+      }
+    });
+
+    dir.subscribe((s) => {
+      if (s === "SUBSCRIBED") {
+        syncDirectory(dir);
+        // Ask all online hosts for instant directory discovery
+        dir.send({
+          type: "broadcast",
+          event: "directory_query",
+          payload: { from: me.current },
+        }).catch(() => {});
+
+        // If we are hosting a public room, re-assert directory presence on connect/reconnect
+        const r = roomRef.current;
+        if (statusRef.current === "hosting" && r && r.type === "public" && r.hostId === me.current) {
+          const entry: PublicRoomEntry = {
+            code: r.code,
+            name: r.name,
+            hostName: r.hostName,
+            count: Math.max(1, membersRef.current?.length || 1),
+            requireApproval: r.requireApproval,
+            at: Date.now(),
+          };
+          dir.track(entry).catch(() => {});
+          dir.send({
+            type: "broadcast",
+            event: "directory_update",
+            payload: { entry },
+          }).catch(() => {});
+        }
+      }
+    });
+    return () => {
+      supabase.removeChannel(dir);
+      dirRef.current = null;
+    };
+  }, [syncDirectory]);
+
+  /** Publish / refresh this host's public room in the directory (or clear it). */
+  const announceDirectory = useCallback((entry: PublicRoomEntry | null) => {
+    const dir = dirRef.current;
+    if (!dir) return;
+    if (entry) {
+      dir.track(entry).catch(() => {});
+      dir.send({
+        type: "broadcast",
+        event: "directory_update",
+        payload: { entry },
+      }).catch(() => {});
+    } else {
+      dir.untrack().catch(() => {});
+      const curCode = roomRef.current?.code;
+      if (curCode) {
+        dir.send({
+          type: "broadcast",
+          event: "directory_remove",
+          payload: { code: curCode },
+        }).catch(() => {});
+      }
+    }
+  }, []);
+
+  /* ---------- cleanup ---------- */
+  const teardown = useCallback(() => {
+    window.clearInterval(beatRef.current);
+    beatRef.current = 0;
+    joinTimersRef.current.forEach(window.clearTimeout);
+    joinTimersRef.current = [];
+    if (lobbyRef.current) supabase.removeChannel(lobbyRef.current);
+    if (chanRef.current) supabase.removeChannel(chanRef.current);
+    lobbyRef.current = null;
+    chanRef.current = null;
+    setActiveChannel(null);
+    setChat([]);
+    banned.clear();
+  }, [banned]);
+
+  useEffect(() => () => teardown(), [teardown]);
+
+  /* ---------- host broadcast of playback ---------- */
+  const pushPlayback = useCallback(() => {
+    const ch = chanRef.current;
+    if (!ch) return;
+    const canDrive = roomRef.current?.hostId === me.current || permRef.current.play_pause;
+    if (!canDrive) return;
+    const pb = hRef.current.getPlayback();
+    if (!pb) return;
+    ch.send({
+      type: "broadcast",
+      event: "playback",
+      payload: { ...pb, ts: Date.now(), by: me.current } as PlaybackState,
+    });
+  }, []);
+
+  /* ---------- lobby host channel management ---------- */
+  const setupHostLobby = useCallback((code: string, info: RoomInfo) => {
+    if (lobbyRef.current) {
+      supabase.removeChannel(lobbyRef.current);
+      lobbyRef.current = null;
+    }
+    const lob = supabase.channel(lobbyChannel(code), {
+      config: { broadcast: { self: false }, presence: { key: me.current } },
+    });
+    lobbyRef.current = lob;
+    lob.on("broadcast", { event: "join_request" }, ({ payload }) => {
+      const req = payload as JoinRequest;
+      if (banRef.current.has(req.userId)) {
+        lob.send({ type: "broadcast", event: "join_response", payload: { userId: req.userId, approved: false, reason: "banned" } });
+        return;
+      }
+      const cur = roomRef.current;
+      if (!cur) return;
+      if (cur.type === "public" && !cur.requireApproval) {
+        // open join → auto approve
+        lob.send({
+          type: "broadcast",
+          event: "join_response",
+          payload: { userId: req.userId, approved: true, room: cur, permissions: permRef.current },
+        });
+        return;
+      }
+      // let requester know host is here
+      lob.send({ type: "broadcast", event: "join_ack", payload: { userId: req.userId } });
+      setRequests((prev) => (prev.some((r) => r.userId === req.userId) ? prev : [...prev, req]));
+    });
+    lob.subscribe((s) => {
+      if (s === "SUBSCRIBED") {
+        lob.track({ role: "host", room: info, permissions: permRef.current, at: Date.now(), sessionId: tabSessionId.current }).catch(() => {});
+      }
+    });
+  }, []);
+
+  /* ---------- presence → resilient member roster tracking with 60s grace period ---------- */
+  const syncMembers = useCallback((ch: RealtimeChannel) => {
+    const state = ch.presenceState() as Record<string, any[]>;
+    const now = Date.now();
+    const currentHostId = roomRef.current?.hostId;
+    const activeUids = new Set<string>();
+
+    Object.entries(state).forEach(([id, metas]) => {
+      const m = (metas?.[0] ?? {}) as any;
+      activeUids.add(id);
+      const isRoomOwner = id === currentHostId;
+      const role: MemberRole = isRoomOwner ? "owner" : m.role === "host" ? "host" : "member";
+      const member: Member = {
+        id,
+        nickname: m.nickname || (isRoomOwner ? roomRef.current?.hostName : "Guest") || "Guest",
+        name: m.nickname || (isRoomOwner ? roomRef.current?.hostName : "Guest") || "Guest",
+        role,
+        at: m.at || now,
+        joinedAt: m.at || now,
+        state: (m.state as MemberState) || "active",
+        lastSeen: now,
+        inVoice: !!m.inVoice,
+        selfMuted: !!m.selfMuted,
+        hostMuted: !!m.hostMuted,
+        canSpeak: m.canSpeak !== false,
+        canHear: m.canHear !== false,
+        speaking: !!m.speaking,
+      };
+      memberCacheRef.current.set(id, { member, lastSeen: now });
+    });
+
+    // Check cached members: retain absent members within a 120s grace window (marked as "away")
+    // This strictly prevents members or host from vanishing when switching tabs or backgrounding
+    const combined: Member[] = [];
+    memberCacheRef.current.forEach((cached, uid) => {
+      if (activeUids.has(uid)) {
+        combined.push(cached.member);
+      } else {
+        const isRoomOwner = uid === currentHostId;
+        // Keep absent member if within 120s grace window or if owner
+        if (now - cached.lastSeen < 120000 || isRoomOwner) {
+          combined.push({
+            ...cached.member,
+            state: "away",
+          });
+        } else {
+          memberCacheRef.current.delete(uid);
+        }
+      }
+    });
+
+    // If room owner is not in combined list at all, insert them as away to preserve room hierarchy
+    if (currentHostId && !combined.some((m) => m.id === currentHostId) && roomRef.current) {
+      const ownerMember: Member = {
+        id: currentHostId,
+        nickname: roomRef.current.hostName || "Host",
+        name: roomRef.current.hostName || "Host",
+        role: "owner",
+        at: now,
+        joinedAt: now,
+        state: "away",
+        lastSeen: now,
+      };
+      combined.push(ownerMember);
+      memberCacheRef.current.set(currentHostId, { member: ownerMember, lastSeen: now });
+    }
+
+    combined.sort((a, b) => (a.role === "owner" ? -1 : b.role === "owner" ? 1 : a.role === "host" ? -1 : b.role === "host" ? 1 : a.at - b.at));
+    setMembers(combined);
+  }, []);
+
+  /* ---------- wire the members channel ---------- */
+  const bindRoomChannel = useCallback(
+    (code: string, role: "host" | "member", info: RoomInfo) => {
+      // Prevent duplicate/ghost channels if bindRoomChannel is called multiple times
+      if (chanRef.current) {
+        supabase.removeChannel(chanRef.current);
+        chanRef.current = null;
+      }
+
+      const ch = supabase.channel(roomChannel(code), {
+        config: { presence: { key: me.current }, broadcast: { self: false } },
+      });
+      chanRef.current = ch;
+
+      ch.on("presence", { event: "sync" }, () => syncMembers(ch));
+      ch.on("presence", { event: "join" }, () => syncMembers(ch));
+      ch.on("presence", { event: "leave" }, () => syncMembers(ch));
+
+      // Everyone receives playback from whoever currently has control (host or permitted member)
+      ch.on("broadcast", { event: "playback" }, ({ payload }) => {
+        const pb = payload as PlaybackState;
+        // Don't echo back if we were the one who dispatched it
+        if (pb.by === me.current) return;
+        hRef.current.applyPlayback(pb);
+      });
+
+      // a fresh member asks the host for current state
+      ch.on("broadcast", { event: "state_request" }, ({ payload }) => {
+        if (roomRef.current?.hostId !== me.current) return;
+        const pb = hRef.current.getPlayback();
+        const q = hRef.current.getQueue?.() || [];
+        ch.send({
+          type: "broadcast",
+          event: "sync_state",
+          payload: {
+            to: payload.userId,
+            playback: pb ? { ...pb, ts: Date.now(), by: me.current } : null,
+            permissions: permRef.current,
+            room: roomRef.current,
+            queue: q,
+            chat: (chatRef.current || []).slice(-60),
+          },
+        });
+      });
+
+      ch.on("broadcast", { event: "sync_state" }, ({ payload }) => {
+        if (payload.to !== me.current) return;
+        if (payload.room) {
+          setRoom(payload.room);
+          roomRef.current = payload.room;
+        }
+        if (payload.permissions) setPermissions(payload.permissions);
+        if (Array.isArray(payload.queue) && payload.queue.length > 0) {
+          hRef.current.applyQueue?.(payload.queue);
+        }
+        if (payload.playback) hRef.current.applyPlayback(payload.playback as PlaybackState);
+        // Synchronize recent chat history for newly joined member
+        if (Array.isArray(payload.chat) && payload.chat.length > 0) {
+          setChat((prev) => {
+            const existingIds = new Set(prev.map((c) => c.id));
+            const newItems = payload.chat
+              .filter((c: any) => !existingIds.has(c.id))
+              .map((c: any) => ({ ...c, mine: c.userId === me.current }));
+            return [...prev, ...newItems].slice(-120);
+          });
+        }
+      });
+
+      // Member requests to add a song to the shared queue
+      ch.on("broadcast", { event: "queue_add" }, ({ payload }) => {
+        if (roomRef.current?.hostId !== me.current) return;
+        const currentQueue = hRef.current.getQueue?.() || [];
+        const incomingTrack = payload.track;
+        if (!incomingTrack) return;
+        // Avoid duplicate ID in queue
+        const exists = currentQueue.some((t: any) => t.id === incomingTrack.id || t.videoId === incomingTrack.videoId);
+        if (!exists) {
+          const newQueue = [...currentQueue, incomingTrack];
+          hRef.current.applyQueue?.(newQueue);
+          // Broadcast updated queue to all room members
+          ch.send({
+            type: "broadcast",
+            event: "queue_update",
+            payload: newQueue,
+          });
+        }
+      });
+
+      // All members receive authoritative queue updates from host
+      ch.on("broadcast", { event: "queue_update" }, ({ payload }) => {
+        if (roomRef.current?.hostId === me.current) return;
+        if (Array.isArray(payload)) {
+          hRef.current.applyQueue?.(payload);
+        }
+      });
+
+      ch.on("broadcast", { event: "permissions" }, ({ payload }) => {
+        const next = payload as Permissions;
+        setPermissions(next);
+        permRef.current = next;
+        // System chat notification about permission change
+        const permNames: [keyof Permissions, string][] = [
+          ["play_pause", "Play/Pause"], ["next", "Skip"], ["previous", "Previous"],
+          ["seek", "Seek"], ["add_song", "Add Songs"], ["shuffle", "Shuffle"],
+        ];
+        const changed = permNames.filter(([k]) => next[k] !== HOST_ONLY_PERMS[k]);
+        if (changed.length > 0) {
+          const labels = changed.map(([, l]) => l).join(", ");
+          const sysMsg = systemMsg(`Host updated permissions: ${labels} now ${next[changed[0][0]] ? "allowed" : "restricted"}`);
+          setChat((prev) => [...prev, sysMsg].slice(-120));
+        }
+      });
+
+      ch.on("broadcast", { event: "chat" }, ({ payload }) => {
+        const m = payload as ChatMsg;
+        setChat((prev) => (prev.some((c) => c.id === m.id) ? prev : [...prev, { ...m, mine: m.userId === me.current }].slice(-120)));
+        // Send browser notification if message is from someone else and page not focused
+        if (m.userId !== me.current && roomRef.current) {
+          notifyChatMessage(m, roomRef.current.name);
+        }
+      });
+      ch.on("broadcast", { event: "chat_delete" }, ({ payload }) => {
+        setChat((prev) => prev.filter((c) => c.id !== payload.id));
+      });
+      ch.on("broadcast", { event: "chat_clear" }, () => setChat([]));
+      ch.on("broadcast", { event: "chat_toggle" }, ({ payload }) => {
+        setRoom((r) => (r ? { ...r, chatEnabled: payload.enabled } : r));
+        if (roomRef.current) roomRef.current.chatEnabled = payload.enabled;
+      });
+
+      // Auto-pause all members when host closes room or broadcasts pause_all
+      ch.on("broadcast", { event: "pause_all" }, () => {
+        hRef.current.applyPlayback({
+          videoId: "",
+          title: "",
+          artist: "",
+          thumb: "",
+          isPlaying: false,
+          position: 0,
+          ts: Date.now(),
+          by: "__system__",
+        });
+      });
+
+      ch.on("broadcast", { event: "host_transfer" }, ({ payload }) => {
+        const wasHost = roomRef.current?.hostId === me.current;
+        const newHostNick = payload.newHostName || "Host";
+        const newRoomName = payload.roomName || `${newHostNick}'s Room`;
+        setRoom((r) => (r ? { ...r, hostId: payload.newHostId, hostName: newHostNick, name: newRoomName } : r));
+        if (roomRef.current) {
+          roomRef.current.hostId = payload.newHostId;
+          roomRef.current.hostName = newHostNick;
+          roomRef.current.name = newRoomName;
+        }
+        const iAmNewHost = payload.newHostId === me.current;
+        setStatus(iAmNewHost ? "hosting" : "member");
+        // If we're now the member, stop host playback heartbeat and clear our directory presence
+        if (!iAmNewHost && wasHost) {
+          window.clearInterval(beatRef.current);
+          announceDirectory(null);
+        }
+        if (iAmNewHost) {
+          // We're the new host — track owner role in presence, start broadcasting, setup lobby & directory
+          ch.track({ nickname: savedNickname() || newHostNick || "Host", role: "owner", at: Date.now() }).catch(() => {});
+          window.clearInterval(beatRef.current);
+          beatRef.current = window.setInterval(pushPlayback, HEARTBEAT_MS);
+          if (roomRef.current) {
+            setupHostLobby(roomRef.current.code, roomRef.current);
+            if (roomRef.current.type === "public") {
+              announceDirectory({
+                code: roomRef.current.code,
+                name: newRoomName,
+                hostName: newHostNick,
+                count: Math.max(1, members.length),
+                requireApproval: roomRef.current.requireApproval,
+                at: Date.now(),
+              });
+            }
+          }
+          hRef.current.onToast?.("You have been promoted to Room Host!");
+        }
+      });
+
+      ch.on("broadcast", { event: "member_left" }, ({ payload }) => {
+        if (payload?.userId) {
+          memberCacheRef.current.delete(payload.userId);
+          setMembers((prev) => prev.filter((m) => m.id !== payload.userId));
+        }
+      });
+
+      ch.on("broadcast", { event: "kick" }, ({ payload }) => {
+        if (payload.userId === me.current) {
+          clearRoomSession();
+          memberCacheRef.current.clear();
+          teardown();
+          setStatus("denied");
+          setRoom(null);
+          setMembers([]);
+          setChat([]);
+          // Auto-pause will be triggered by status change in App.tsx
+        }
+      });
+
+      ch.on("broadcast", { event: "room_closed" }, () => {
+        if (roomRef.current?.hostId === me.current) return;
+        clearRoomSession();
+        memberCacheRef.current.clear();
+        teardown();
+        setStatus("closed");
+        setRoom(null);
+        setMembers([]);
+        setChat([]);
+        setRequests([]);
+      });
+
+      // Voice enable/disable toggle listener
+      ch.on("broadcast", { event: "voice_toggle" }, ({ payload }) => {
+        setRoom((r) => (r ? { ...r, voiceEnabled: payload.voiceEnabled } : r));
+        if (roomRef.current) roomRef.current.voiceEnabled = payload.voiceEnabled;
+      });
+
+      // Member role promotion/demotion listener
+      ch.on("broadcast", { event: "member_role" }, ({ payload }) => {
+        setMembers((prev) =>
+          prev.map((m) => (m.id === payload.userId ? { ...m, role: payload.role } : m))
+        );
+        if (payload.userId === me.current) {
+          ch.track({
+            nickname: savedNickname() || "Guest",
+            role: payload.role,
+            state: "active",
+            at: Date.now(),
+            sessionId: tabSessionId.current,
+          });
+        }
+      });
+
+      ch.subscribe((s) => {
+        if (s === "SUBSCRIBED") {
+          setActiveChannel(ch);
+          setConnection("connected");
+          ch.track({
+            nickname: savedNickname() || "Guest",
+            role,
+            state: "active",
+            at: Date.now(),
+            sessionId: tabSessionId.current,
+          });
+          syncMembers(ch);
+          requestNotificationPermission();
+
+          // Save active room session for instant recovery on refresh
+          saveRoomSession({
+            roomCode: code,
+            roomName: info.name,
+            role: role === "host" ? "owner" : "member",
+            userId: me.current,
+            sessionId: tabSessionId.current,
+            joinedAt: Date.now(),
+            voiceAutoReconnect: true,
+          });
+
+          if (role === "member") {
+            // ask host for the current state after a tick
+            window.setTimeout(() => {
+              ch.send({ type: "broadcast", event: "state_request", payload: { userId: me.current } });
+            }, 400);
+          } else {
+            // host heartbeat keeps late-joiners aligned (timestamp based, low freq)
+            window.clearInterval(beatRef.current);
+            beatRef.current = window.setInterval(pushPlayback, HEARTBEAT_MS);
+            // Re-announce directory if public host
+            if (info.type === "public") {
+              announceDirectory({
+                code: info.code,
+                name: info.name,
+                hostName: info.hostName,
+                count: Math.max(1, membersRef.current?.length || 1),
+                requireApproval: info.requireApproval,
+                at: Date.now(),
+              });
+            }
+          }
+        } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
+          setConnection("reconnecting");
+        } else if (s === "CLOSED") {
+          setConnection((c) => (statusRef.current === "idle" ? "offline" : c));
+        }
+      });
+
+      void info;
+      return ch;
+    },
+    [announceDirectory, members.length, pushPlayback, setupHostLobby, syncMembers, teardown]
+  );
+
+  /* ---------- create ---------- */
+  const createRoom = useCallback(
+    (opts: CreateOpts) => {
+      teardown();
+      const code = genRoomCode();
+      const nick = savedNickname() || "Host";
+      const info: RoomInfo = {
+        code,
+        name: opts.name.trim() || `${nick}'s Room`,
+        type: opts.type,
+        requireApproval: opts.type === "private" ? true : opts.requireApproval,
+        hostId: me.current,
+        hostName: nick,
+        chatEnabled: opts.chatEnabled ?? true,
+        voiceEnabled: opts.voiceEnabled ?? true,
+      };
+      setRoom(info);
+      roomRef.current = info;
+      const perms = opts.type === "public" && opts.control === "shared" ? SHARED_PERMS : HOST_ONLY_PERMS;
+      setPermissions(perms);
+      permRef.current = perms;
+      setChat([]);
+      setRequests([]);
+      setStatus("hosting");
+
+      // Setup lobby channel for host presence and join approvals
+      setupHostLobby(code, info);
+
+      bindRoomChannel(code, "host", info);
+
+      // list public rooms in the global directory
+      if (info.type === "public") {
+        announceDirectory({
+          code: info.code,
+          name: info.name,
+          hostName: info.hostName,
+          count: 1,
+          requireApproval: info.requireApproval,
+          at: Date.now(),
+        });
+      }
+      return info;
+    },
+    [announceDirectory, bindRoomChannel, setupHostLobby, teardown]
+  );
+
+  /* ---------- join ---------- */
+  const joinRoom = useCallback(
+    (code: string, nick: string, isRecovery = false) => {
+      teardown();
+      const clean = code.trim().toUpperCase();
+      saveNickname(nick.trim() || "Guest");
+      setNickname(nick.trim() || "Guest");
+      setChat([]);
+
+      // Fast-path: If the room is known to be an open public room, self-admit immediately!
+      const knownPublic = publicRooms.find((r) => r.code === clean) || publicRoomsCacheRef.current.get(clean);
+      if (knownPublic && !knownPublic.requireApproval) {
+        const info: RoomInfo = {
+          code: clean,
+          name: knownPublic.name,
+          type: "public",
+          requireApproval: false,
+          hostId: "",
+          hostName: knownPublic.hostName,
+          chatEnabled: true,
+          voiceEnabled: true,
+        };
+        setRoom(info);
+        roomRef.current = info;
+        setStatus("member");
+        bindRoomChannel(clean, "member", info);
+        return;
+      }
+
+      setStatus(isRecovery ? "waiting" : "requesting");
+
+      // If recovery, pre-bind to roomChannel immediately so we don't miss room traffic
+      if (isRecovery) {
+        const dummyInfo: RoomInfo = {
+          code: clean,
+          name: `${clean} Room`,
+          type: "public",
+          requireApproval: false,
+          hostId: "",
+          hostName: "Host",
+          chatEnabled: true,
+          voiceEnabled: true,
+        };
+        bindRoomChannel(clean, "member", dummyInfo);
+      }
+
+      const lob = supabase.channel(lobbyChannel(clean), {
+        config: { broadcast: { self: false }, presence: { key: me.current } },
+      });
+      lobbyRef.current = lob;
+
+      let resolved = false;
+      let ackd = false;
+
+      // Find the host advertised in lobby presence and act on the room config.
+      const tryHostPresence = (): boolean => {
+        const state = lob.presenceState() as Record<string, any[]>;
+        for (const metas of Object.values(state)) {
+          const m = (metas?.[0] ?? {}) as any;
+          if (m?.role === "host" && m?.room) {
+            ackd = true; // a host exists
+            const info: RoomInfo = m.room;
+            if (info.type === "public" && !info.requireApproval) {
+              // Option A — anyone can join → self-admit immediately
+              resolved = true;
+              setRoom(info);
+              roomRef.current = info;
+              if (m.permissions) setPermissions(m.permissions);
+              setStatus("member");
+              bindRoomChannel(clean, "member", info);
+            }
+            return true;
+          }
+        }
+        return false;
+      };
+      lob.on("presence", { event: "sync" }, () => {
+        if (!resolved) tryHostPresence();
+      });
+      lob.on("presence", { event: "join" }, () => {
+        if (!resolved) tryHostPresence();
+      });
+
+      lob.on("broadcast", { event: "join_ack" }, ({ payload }) => {
+        if (payload.userId === me.current) ackd = true;
+      });
+      lob.on("broadcast", { event: "join_response" }, ({ payload }) => {
+        if (payload.userId !== me.current) return;
+        resolved = true;
+        if (payload.approved) {
+          const info: RoomInfo = payload.room;
+          setRoom(info);
+          roomRef.current = info;
+          if (payload.permissions) setPermissions(payload.permissions);
+          setStatus("member");
+          bindRoomChannel(clean, "member", info);
+        } else {
+          clearRoomSession();
+          setStatus("denied");
+          teardown();
+        }
+      });
+
+      const sendReq = () =>
+        lob.send({
+          type: "broadcast",
+          event: "join_request",
+          payload: { userId: me.current, nickname: nick.trim() || "Guest", at: Date.now() } as JoinRequest,
+        });
+
+      lob.subscribe((s) => {
+        if (s === "SUBSCRIBED") {
+          setConnection("connected");
+          if (!isRecovery) setStatus("waiting");
+          // announce ourselves so the host presence-list can see us, then read host config
+          lob.track({ role: "member", nickname: nick.trim() || "Guest", at: Date.now(), sessionId: tabSessionId.current }).catch(() => {});
+          const admitted = tryHostPresence();
+          if (!admitted) {
+            sendReq();
+            joinTimersRef.current.push(window.setTimeout(() => !resolved && (tryHostPresence() || sendReq()), 900));
+            joinTimersRef.current.push(window.setTimeout(() => !resolved && (tryHostPresence() || sendReq()), 2400));
+          }
+          // no host presence and no answer → room not found / host offline
+          if (!isRecovery) {
+            joinTimersRef.current.push(window.setTimeout(() => {
+              if (!resolved && !ackd && (statusRef.current === "waiting" || statusRef.current === "requesting")) {
+                setStatus("error");
+                teardown();
+              }
+            }, 14000));
+          }
+        } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
+          setConnection("reconnecting");
+        }
+      });
+    },
+    [bindRoomChannel, teardown]
+  );
+
+  /* ---------- host: approve / reject ---------- */
+  const approve = useCallback((uid: string) => {
+    const lob = lobbyRef.current;
+    if (!lob || !roomRef.current) return;
+    lob.send({
+      type: "broadcast",
+      event: "join_response",
+      payload: { userId: uid, approved: true, room: roomRef.current, permissions: permRef.current },
+    });
+    setRequests((prev) => prev.filter((r) => r.userId !== uid));
+  }, []);
+
+  const reject = useCallback((uid: string) => {
+    const lob = lobbyRef.current;
+    lob?.send({ type: "broadcast", event: "join_response", payload: { userId: uid, approved: false } });
+    setRequests((prev) => prev.filter((r) => r.userId !== uid));
+  }, []);
+
+  /* ---------- chat ---------- */
+  const sendChat = useCallback((text: string) => {
+    const ch = chanRef.current;
+    const t = text.trim();
+    if (!ch || !t) return;
+    const effectiveNick = savedNickname() || nickname || "Guest";
+    const msg: ChatMsg = {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+      userId: me.current,
+      nickname: effectiveNick,
+      message: t.slice(0, 400),
+      ts: Date.now(),
+    };
+    setChat((prev) => [...prev, { ...msg, mine: true }].slice(-120));
+    ch.send({ type: "broadcast", event: "chat", payload: msg }).catch((err) => {
+      console.warn("[RoomChat] broadcast send error:", err);
+    });
+  }, [nickname]);
+
+  const deleteChat = useCallback((id: string) => {
+    chanRef.current?.send({ type: "broadcast", event: "chat_delete", payload: { id } });
+    setChat((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
+  const clearChat = useCallback(() => {
+    chanRef.current?.send({ type: "broadcast", event: "chat_clear", payload: {} });
+    setChat([]);
+  }, []);
+
+  const setChatEnabled = useCallback((on: boolean) => {
+    setRoom((r) => (r ? { ...r, chatEnabled: on } : r));
+    roomRef.current = roomRef.current ? { ...roomRef.current, chatEnabled: on } : roomRef.current;
+    chanRef.current?.send({ type: "broadcast", event: "chat_toggle", payload: { enabled: on } });
+  }, []);
+
+  /* ---------- host controls ---------- */
+  const updatePermissions = useCallback((next: Permissions) => {
+    setPermissions(next);
+    permRef.current = next;
+    chanRef.current?.send({ type: "broadcast", event: "permissions", payload: next });
+  }, []);
+
+  const transferHost = useCallback((uid: string) => {
+    const target = members.find((m) => m.id === uid);
+    if (!target || !roomRef.current) return;
+    const targetNick = target.nickname || "Host";
+    const newRoomName = `${targetNick}'s Room`;
+    chanRef.current?.send({
+      type: "broadcast",
+      event: "host_transfer",
+      payload: { newHostId: uid, newHostName: targetNick, roomName: newRoomName },
+    });
+    setRoom((r) => (r ? { ...r, hostId: uid, hostName: targetNick, name: newRoomName } : r));
+    if (roomRef.current) {
+      roomRef.current.hostId = uid;
+      roomRef.current.hostName = targetNick;
+      roomRef.current.name = newRoomName;
+    }
+    setStatus("member");
+    window.clearInterval(beatRef.current);
+    announceDirectory(null);
+  }, [members, announceDirectory]);
+
+  const kick = useCallback((uid: string, ban = false) => {
+    // Owner invariant: Host or Member can never kick the Owner
+    if (uid === roomRef.current?.hostId) return;
+    if (ban) {
+      banRef.current.add(uid);
+      if (banRef.current.size > 100) {
+        const first = banRef.current.values().next().value;
+        if (first) banRef.current.delete(first);
+      }
+    }
+    // Find the kicked member's name for the system chat message
+    const kicked = members.find((m) => m.id === uid);
+    const kickedName = kicked?.nickname || "Member";
+    chanRef.current?.send({ type: "broadcast", event: "kick", payload: { userId: uid } });
+    // System chat message about the kick
+    const sysKick = systemMsg(`${kickedName} was removed from the room`);
+    chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysKick });
+    setMembers((prev) => prev.filter((m) => m.id !== uid));
+  }, [members]);
+
+  /* ---------- Role & Voice Moderation ---------- */
+  const promoteToHost = useCallback((targetUid: string) => {
+    if (roomRef.current?.hostId !== me.current) return; // Only Owner can promote
+    if (targetUid === me.current) return;
+    const target = members.find((m) => m.id === targetUid);
+    if (!target) return;
+    chanRef.current?.send({
+      type: "broadcast",
+      event: "member_role",
+      payload: { userId: targetUid, role: "host" },
+    });
+    setMembers((prev) =>
+      prev.map((m) => (m.id === targetUid ? { ...m, role: "host" } : m))
+    );
+    const sysMsg = systemMsg(`${target.nickname} was promoted to Co-Host`);
+    chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysMsg });
+    setChat((prev) => [...prev, sysMsg].slice(-120));
+  }, [members]);
+
+  const demoteHost = useCallback((targetUid: string) => {
+    if (roomRef.current?.hostId !== me.current) return; // Only Owner can demote
+    if (targetUid === roomRef.current?.hostId) return; // Owner cannot be demoted
+    const target = members.find((m) => m.id === targetUid);
+    if (!target) return;
+    chanRef.current?.send({
+      type: "broadcast",
+      event: "member_role",
+      payload: { userId: targetUid, role: "member" },
+    });
+    setMembers((prev) =>
+      prev.map((m) => (m.id === targetUid ? { ...m, role: "member" } : m))
+    );
+    const sysMsg = systemMsg(`${target.nickname} was demoted to Member`);
+    chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysMsg });
+    setChat((prev) => [...prev, sysMsg].slice(-120));
+  }, [members]);
+
+  const toggleVoiceEnabled = useCallback((on: boolean) => {
+    if (!isHost && myRole !== "owner") return;
+    setRoom((r) => (r ? { ...r, voiceEnabled: on } : r));
+    if (roomRef.current) roomRef.current.voiceEnabled = on;
+    chanRef.current?.send({ type: "broadcast", event: "voice_toggle", payload: { voiceEnabled: on } });
+    const sysMsg = systemMsg(`Voice was ${on ? "enabled" : "disabled"} by ${isOwner ? "Owner" : "Host"}`);
+    chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysMsg });
+    setChat((prev) => [...prev, sysMsg].slice(-120));
+  }, [isHost, myRole, isOwner]);
+
+  const closeRoom = useCallback(() => {
+    // Broadcast pause to all members before closing
+    chanRef.current?.send({ type: "broadcast", event: "pause_all", payload: {} });
+    // System chat message
+    const sysClose = systemMsg("Room closed by host");
+    chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysClose });
+    chanRef.current?.send({ type: "broadcast", event: "room_closed", payload: {} });
+    announceDirectory(null);
+    clearRoomSession();
+    memberCacheRef.current.clear();
+    teardown();
+    setStatus("idle");
+    setRoom(null);
+    setMembers([]);
+    setChat([]);
+    setRequests([]);
+  }, [announceDirectory, teardown]);
+
+  const leave = useCallback(() => {
+    const wasHost = roomRef.current?.hostId === me.current;
+    const membersList = members.filter((m) => m.id !== me.current);
+
+    // Broadcast our explicit departure so other clients remove us immediately without waiting for grace period
+    chanRef.current?.send({
+      type: "broadcast",
+      event: "member_left",
+      payload: { userId: me.current },
+    });
+
+    // Auto-transfer host to next person (co-host first, then oldest member) before leaving
+    if (wasHost && membersList.length > 0) {
+      const coHosts = membersList.filter((m) => m.role === "host").sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+      const regular = membersList.filter((m) => m.role !== "host").sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+      const newHost = coHosts[0] || regular[0];
+      const newHostNick = newHost.nickname || "Host";
+
+      const updatedRoomName = `${newHostNick}'s Room`;
+
+      const transferPayload = {
+        newHostId: newHost.id,
+        newHostName: newHostNick,
+        roomName: updatedRoomName,
+      };
+      chanRef.current?.send({ type: "broadcast", event: "host_transfer", payload: transferPayload });
+      // System chat message about host transfer
+      const sysTransfer = systemMsg(`${newHostNick} is now the host`);
+      chanRef.current?.send({ type: "broadcast", event: "chat", payload: sysTransfer });
+      // Update local state
+      setRoom((r) => r ? { ...r, hostId: newHost.id, hostName: newHostNick, name: updatedRoomName } : r);
+      if (roomRef.current) {
+        roomRef.current.hostId = newHost.id;
+        roomRef.current.hostName = newHostNick;
+        roomRef.current.name = updatedRoomName;
+      }
+    } else if (wasHost && membersList.length === 0) {
+      // Last person leaving — close room
+      chanRef.current?.send({ type: "broadcast", event: "pause_all", payload: {} });
+      chanRef.current?.send({ type: "broadcast", event: "room_closed", payload: {} });
+    }
+
+    // Departing user immediately clears their directory entry so duplicate entries are never shown
+    announceDirectory(null);
+    clearRoomSession();
+    memberCacheRef.current.clear();
+
+    teardown();
+    setStatus("idle");
+    setRoom(null);
+    setMembers([]);
+    setChat([]);
+    setRequests([]);
+    setConnection("offline");
+  }, [announceDirectory, teardown, members]);
+
+  const dismiss = useCallback(() => {
+    setStatus("idle");
+    setRoom(null);
+  }, []);
+
+  const updateNickname = useCallback((n: string) => {
+    saveNickname(n);
+    setNickname(n);
+  }, []);
+
+  // Host keeps the directory count in sync with real presence
+  useEffect(() => {
+    const r = roomRef.current;
+    if (status === "hosting" && r && r.type === "public" && r.hostId === me.current) {
+      announceDirectory({
+        code: r.code,
+        name: r.name,
+        hostName: r.hostName,
+        count: Math.max(1, members.length),
+        requireApproval: r.requireApproval,
+        at: Date.now(),
+      });
+    }
+  }, [status, members.length, room?.name, room?.hostName, room?.hostId, announceDirectory]);
+
+  // Keep tab and timers unthrottled in background while in room
+  useEffect(() => {
+    if (status === "hosting" || status === "member") {
+      const release = backgroundKeepAlive.acquire();
+      return release;
+    }
+  }, [status]);
+
+  // Use backgroundKeepAlive ticker for unthrottled host heartbeats, playback sync, and DIRECTORY keepalive
+  useEffect(() => {
+    if (status !== "hosting") return;
+    let tickCount = 0;
+    const unbind = backgroundKeepAlive.onTick(() => {
+      if (statusRef.current === "hosting") {
+        pushPlayback();
+        tickCount++;
+        // Every 3 ticks (~12s), refresh DIRECTORY_CHANNEL and lobby presence so Phoenix Presence never times out in background tabs
+        if (tickCount % 3 === 0) {
+          const r = roomRef.current;
+          if (r && r.hostId === me.current) {
+            if (r.type === "public") {
+              announceDirectory({
+                code: r.code,
+                name: r.name,
+                hostName: r.hostName,
+                count: Math.max(1, membersRef.current?.length || 1),
+                requireApproval: r.requireApproval,
+                at: Date.now(),
+              });
+            }
+            if (lobbyRef.current) {
+              lobbyRef.current.track({
+                role: "host",
+                room: r,
+                permissions: permRef.current,
+                at: Date.now(),
+                sessionId: tabSessionId.current,
+              }).catch(() => {});
+            }
+          }
+        }
+      }
+    });
+    return unbind;
+  }, [status, pushPlayback, announceDirectory]);
+
+  // Tab Switch & Return Lifecycle: Re-assert presence, sync playback, and recover on return
+  useEffect(() => {
+    const reassertPresence = () => {
+      const ch = chanRef.current;
+      if (ch) {
+        ch.track({
+          nickname: savedNickname() || "Guest",
+          role: statusRef.current === "hosting" ? "owner" : myRole,
+          state: "active",
+          lastSeen: Date.now(),
+          sessionId: tabSessionId.current,
+        }).catch(() => {});
+      }
+      setConnection("connected");
+
+      // Re-assert DIRECTORY_CHANNEL and lobby presence if host
+      const r = roomRef.current;
+      if (statusRef.current === "hosting" && r && r.hostId === me.current) {
+        if (r.type === "public") {
+          announceDirectory({
+            code: r.code,
+            name: r.name,
+            hostName: r.hostName,
+            count: Math.max(1, membersRef.current?.length || 1),
+            requireApproval: r.requireApproval,
+            at: Date.now(),
+          });
+        }
+        if (lobbyRef.current) {
+          lobbyRef.current.track({
+            role: "host",
+            room: r,
+            permissions: permRef.current,
+            at: Date.now(),
+            sessionId: tabSessionId.current,
+          }).catch(() => {});
+        }
+      }
+
+      // Re-sync directory listings if dirRef is present
+      if (dirRef.current) {
+        syncDirectory(dirRef.current);
+      }
+
+      // Re-sync state: members ask for latest state, host re-pushes playback
+      if (statusRef.current === "member") {
+        ch?.send({ type: "broadcast", event: "state_request", payload: { userId: me.current } });
+      } else if (statusRef.current === "hosting") {
+        pushPlayback();
+      }
+    };
+
+    const handleVisibility = () => {
+      const ch = chanRef.current;
+      if (!ch) return;
+      if (document.visibilityState === "hidden") {
+        // Tab hidden: do NOT leave room! Mark status as away in presence
+        ch.track({
+          nickname: savedNickname() || "Guest",
+          role: statusRef.current === "hosting" ? "owner" : myRole,
+          state: "away",
+          lastSeen: Date.now(),
+          sessionId: tabSessionId.current,
+        }).catch(() => {});
+      } else {
+        reassertPresence();
+      }
+    };
+
+    const handleFocus = () => {
+      reassertPresence();
+    };
+
+    const handleOnline = () => {
+      reassertPresence();
+    };
+
+    const handleOffline = () => {
+      setConnection("offline");
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handleFocus);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handleFocus);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [myRole, pushPlayback, announceDirectory, syncDirectory]);
+
+  // Automatic Room Session Recovery on Initial Mount / Page Refresh
+  useEffect(() => {
+    if (isRecoveringRef.current) return;
+    isRecoveringRef.current = true;
+
+    const saved = loadRoomSession();
+    const invite = readInviteCode();
+
+    if (saved && saved.roomCode) {
+      const code = saved.roomCode.toUpperCase();
+      const isMyRoom = saved.role === "owner" && saved.userId === me.current;
+
+      if (isMyRoom) {
+        const nick = savedNickname() || "Host";
+        const info: RoomInfo = {
+          code,
+          name: saved.roomName || `${nick}'s Room`,
+          type: "public",
+          requireApproval: false,
+          hostId: me.current,
+          hostName: nick,
+          chatEnabled: true,
+          voiceEnabled: true,
+        };
+        setRoom(info);
+        roomRef.current = info;
+        setStatus("hosting");
+        setupHostLobby(code, info);
+        bindRoomChannel(code, "host", info);
+        announceDirectory({
+          code: info.code,
+          name: info.name,
+          hostName: info.hostName,
+          count: 1,
+          requireApproval: info.requireApproval,
+          at: Date.now(),
+        });
+      } else {
+        joinRoom(code, savedNickname() || "Guest", true);
+      }
+    } else if (invite) {
+      joinRoom(invite, savedNickname() || "Guest", false);
+    }
+  }, [bindRoomChannel, joinRoom, setupHostLobby, announceDirectory]);
+
+  /* ---------- derived ---------- */
+  const inRoom = status === "hosting" || status === "member";
+  const canDrive = useMemo(() => {
+    if (!inRoom) return true; // solo: full control
+    if (isHost) return true; // host always has control regardless of permissions
+    // Members can drive if they have play_pause permission
+    return permissions.play_pause;
+  }, [inRoom, isHost, permissions]);
+
+  const addQueueTrack = useCallback((track: any) => {
+    const ch = chanRef.current;
+    if (!ch) return;
+    if (roomRef.current?.hostId === me.current) {
+      const current = hRef.current.getQueue?.() || [];
+      const updated = [...current, track];
+      hRef.current.applyQueue?.(updated);
+      ch.send({ type: "broadcast", event: "queue_update", payload: updated });
+    } else {
+      ch.send({ type: "broadcast", event: "queue_add", payload: { track } });
+    }
+  }, []);
+
+  const broadcastQueue = useCallback((queue: any[]) => {
+    const ch = chanRef.current;
+    if (!ch || roomRef.current?.hostId !== me.current) return;
+    ch.send({ type: "broadcast", event: "queue_update", payload: queue });
+  }, []);
+
+  return {
+    me: me.current,
+    status,
+    room,
+    isOwner,
+    myRole,
+    isHost,
+    inRoom,
+    members,
+    online: members.length,
+    requests,
+    chat,
+    permissions,
+    connection,
+    nickname,
+    canDrive,
+    publicRooms,
+    voice,
+    // actions
+    createRoom,
+    joinRoom,
+    approve,
+    reject,
+    sendChat,
+    deleteChat,
+    clearChat,
+    setChatEnabled,
+    updatePermissions,
+    transferHost,
+    promoteToHost,
+    demoteHost,
+    toggleVoiceEnabled,
+    kick,
+    closeRoom,
+    leave,
+    dismiss,
+    updateNickname,
+    pushPlayback,
+    addQueueTrack,
+    broadcastQueue,
+  };
+}
+
+export type RoomApi = ReturnType<typeof useRoom>;

@@ -1,5 +1,6 @@
 import type { Track } from "./media";
 import { loadYouTubeAPI } from "./youtube";
+import { fetchTrackMeta, tokens, searchYouTube } from "./media";
 
 export interface SpotifyTrackInfo {
   title: string;
@@ -201,46 +202,81 @@ export async function loadSpotifyData(
 }
 
 /**
- * Searches YouTube for a matching track (Title + Artist) using the hidden YouTube API cuePlaylist search.
- * Zero CORS restrictions, 100% official YouTube client-side engine.
+ * Strict title/artist similarity check for a YouTube candidate against the
+ * song we want. Returns true only when the candidate is clearly the SAME song
+ * (strong title token overlap + at least one artist token appearing in the
+ * candidate title or uploader). Non-matches are rejected so we never import a
+ * random/wrong video.
+ */
+function isGoodMatch(
+  queryTitle: string,
+  queryArtist: string,
+  candTitle: string,
+  candArtist: string,
+  candDuration?: number,
+  queryDuration?: number
+): boolean {
+  const qT = tokens(queryTitle);
+  if (!qT.length) return false;
+
+  const candTokens = new Set(tokens(`${candTitle} ${candArtist}`));
+  let hit = 0;
+  for (const t of qT) if (candTokens.has(t)) hit++;
+  const cover = hit / qT.length;
+  if (cover < 0.6) return false;
+
+  // Reject wildly wrong lengths (live versions / full albums) when title isn't a full match
+  if (cover < 1 && typeof queryDuration === "number" && typeof candDuration === "number") {
+    if (candDuration > queryDuration * 3 || candDuration < queryDuration * 0.33) return false;
+  }
+
+  const text = `${candTitle} ${candArtist}`.toLowerCase();
+  const artistTokens = tokens(queryArtist).slice(0, 3);
+  const artistHit = artistTokens.length === 0 || artistTokens.some((t) => text.includes(t));
+  return artistHit;
+}
+
+/**
+ * Searches YouTube for a matching track (Title + Artist) and verifies the
+ * result is the SAME song before returning it.
+ * Strategy 1: keyless Piped/Invidious REST search with candidate scoring.
+ * Strategy 2: hidden IFrame player cuePlaylist search, verified via oEmbed.
+ * Returns null when no verified match exists (caller skips the song).
  */
 export async function matchTrackToYouTube(
   title: string,
-  artist: string
+  artist: string,
+  duration?: number
 ): Promise<string | null> {
-  const query = `${artist} - ${title} audio`.trim();
+  const query = `${artist} - ${title}`.trim();
 
-  // Strategy 1: Hidden YouTube player cuePlaylist(search)
+  // Strategy 1: REST search with per-candidate verification
   try {
-    const vid = await searchViaHiddenPlayer(query);
-    if (vid) return vid;
+    const results = await searchYouTube(query, 10);
+    for (const r of results) {
+      if (
+        isGoodMatch(title, artist, r.title, r.artist, r.duration, duration) &&
+        r.videoId &&
+        r.videoId.length === 11
+      ) {
+        return r.videoId;
+      }
+    }
   } catch {
     /* fallback */
   }
 
-  // Strategy 2: Open CORS search endpoints
-  const eps = [
-    `https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=videos`,
-    `https://inv.nadeko.net/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-    `https://yewtu.be/api/v1/search?q=${encodeURIComponent(query)}&type=video`,
-  ];
-
-  for (const ep of eps) {
-    try {
-      const ctrl = new AbortController();
-      const to = window.setTimeout(() => ctrl.abort(), 4000);
-      const r = await fetch(ep, { signal: ctrl.signal });
-      window.clearTimeout(to);
-      if (!r.ok) continue;
-      const j = await r.json();
-      const items = j.items || (Array.isArray(j) ? j : []);
-      if (items.length > 0) {
-        const id = items[0].videoId || (items[0].url ? items[0].url.replace("/watch?v=", "") : null);
-        if (id && typeof id === "string" && id.length === 11) return id;
+  // Strategy 2: hidden-player search, verified through oEmbed metadata
+  try {
+    const vid = await searchViaHiddenPlayer(`${query} audio`);
+    if (vid && vid.length === 11) {
+      const meta = await fetchTrackMeta(vid);
+      if (isGoodMatch(title, artist, meta.title, meta.artist, meta.duration, duration)) {
+        return vid;
       }
-    } catch {
-      /* continue */
     }
+  } catch {
+    /* fallback */
   }
 
   return null;

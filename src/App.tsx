@@ -1032,22 +1032,22 @@ export default function App() {
           wLoading={wLoading}
           onRefreshWeather={() => loadWeather(false)}
           onAddTrack={addTrack}
-          onPlayEntirePlaylist={(list) => {
-            if (!list.length) return;
-            setTracks(list);
-            saveCustomTracks(list);
-            player.select(0);
-            pushToast(`Playing playlist (${list.length} tracks)`);
-          }}
-          onAddPlaylistToQueue={(list) => {
-            if (!list.length) return;
-            setTracks((prev) => {
-              const existing = new Set(prev.map((x) => x.videoId));
-              const toAdd = list.filter((x) => !existing.has(x.videoId));
-              const next = [...prev, ...toAdd];
-              saveCustomTracks(next);
-              return next;
-            });
+                   onPlayEntirePlaylist={(list) => {
+                     if (!list.length) return;
+                     player.loadAndPlay(list, 0);
+                     setTracks(list);
+                     saveCustomTracks(list);
+                     pushToast(`Playing playlist (${list.length} tracks)`);
+                   }}
+                   onAddPlaylistToQueue={(list) => {
+                     if (!list.length) return;
+                     setTracks((prev) => {
+                       const existing = new Set(prev.map((x) => x.videoId));
+                       const added = list.filter((x) => !existing.has(x.videoId));
+                       const next = [...prev, ...added];
+                       saveCustomTracks(next);
+                       return next;
+                     });
             pushToast(`Added ${list.length} tracks to queue`);
           }}
           onRemoveTrack={removeTrack}
@@ -1171,14 +1171,13 @@ export default function App() {
                     });
                     pushToast(`Added — ${t.title}`);
                   }}
-                  onPlayEntirePlaylist={(list) => {
-                    if (!list.length) return;
-                    setTracks(list);
-                    saveCustomTracks(list);
-                    player.select(0);
-                    setPlaylistsOpen(false);
-                    pushToast(`Playing playlist (${list.length} tracks)`);
-                  }}
+                   onPlayEntirePlaylist={(list) => {
+                     if (!list.length) return;
+                     player.loadAndPlay(list, 0);
+                     setTracks(list);
+                     saveCustomTracks(list);
+                     pushToast(`Playing playlist (${list.length} tracks)`);
+                   }}
                   onAddPlaylistToQueue={(list) => {
                     setTracks((prev) => {
                       const existing = new Set(prev.map((x) => x.videoId));

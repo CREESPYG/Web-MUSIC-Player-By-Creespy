@@ -497,6 +497,22 @@ export function usePlayer(
     [cue, toggle]
   );
 
+  /**
+   * Replaces the ENTIRE queue synchronously, then jumps to track `i` and
+   * autoplays. This is the "Play All / Play Entire Playlist" entry point:
+   * unlike `select`, it swaps tracksRef BEFORE cueing, so the first cue
+   * reads the fresh queue instead of the stale cached one (fixes Bug 2
+   * where Play All started the previously cached playlist's 1st song).
+   */
+  const loadAndPlay = useCallback(
+    (list: Track[], i: number) => {
+      if (!list.length) return;
+      tracksRef.current = list;
+      cue(i, true);
+    },
+    [cue]
+  );
+
   const prev = useCallback(() => {
     const p = pRef.current;
     try {
@@ -591,6 +607,7 @@ export function usePlayer(
     repeat,
     toggle,
     select,
+    loadAndPlay,
     cue,
     next: () => advance(false),
     prev,

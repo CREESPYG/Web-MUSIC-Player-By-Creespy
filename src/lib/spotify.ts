@@ -381,18 +381,20 @@ export async function convertSpotifyTracksToPlayerTracks(
     const s = spotifyTracks[i];
     onResolveProgress?.(i, total);
 
-    // Pre-resolve the first 3 tracks so user can play immediately without waiting
-    let resolvedVideoId: string | null = null;
-    if (i < 3) {
-      try {
-        resolvedVideoId = await matchTrackToYouTube(s.title, s.artist);
-      } catch {
-        /* fallback */
-      }
+    // Strictly match this exact song to a real YouTube video.
+    // If the original track can't be found on YouTube, SKIP it instead
+    // of importing an unplayable placeholder (per user requirement).
+    let videoId: string | null = null;
+    try {
+      videoId = await matchTrackToYouTube(s.title, s.artist);
+    } catch {
+      /* skip on network error */
     }
+    if (!videoId) continue;
 
-    // Fallback or placeholder video ID if search hasn't run yet
-    const videoId = resolvedVideoId || `sp_${encodeURIComponent(s.title).slice(0, 7)}_${i}`;
+    // Per-song cover art comes from the matched video's own thumbnail,
+    // NOT the playlist cover applied to every song.
+    const art = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
     const trk: Track = {
       id: `sp-${Date.now()}-${i}`,
@@ -401,9 +403,9 @@ export async function convertSpotifyTracksToPlayerTracks(
       artist: s.artist,
       album: playlistTitle,
       duration: s.duration || 180,
-      thumb: s.cover || `https://i.ytimg.com/vi/${resolvedVideoId || "dQw4w9WgXcQ"}/maxresdefault.jpg`,
-      artwork: s.cover,
-      coverUrl: s.cover,
+      thumb: art,
+      artwork: art,
+      coverUrl: art,
       sourceType: "spotify",
       sourceUrl: s.spotifyUri || `https://open.spotify.com/search/${encodeURIComponent(`${s.artist} ${s.title}`)}`,
       source: "custom",

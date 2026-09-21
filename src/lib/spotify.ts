@@ -365,6 +365,34 @@ function searchViaHiddenPlayer(query: string): Promise<string | null> {
 }
 
 /**
+ * Module-level cache: normalized "title|artist" → verified YouTube videoId
+ * (or null sentinel when that exact song proved UNMATCHABLE on YouTube).
+ *
+ * WHY IT SPEEDS UP IMPORTS WITHOUT CHANGING CORRECTNESS:
+ *  • Re-importing the SAME playlist again → every track is a cache hit,
+ *    zero network. (Importing a playlist twice is the most common repeat.)
+ *  • Repeated titles WITHIN one playlist (a song appearing twice) resolve
+ *    the 2nd occurrence from cache, not a fresh search.
+ *  • Common songs shared across two different playlists resolve instantly.
+ * The hit path is a single Map.get — no YouTube REST round-trip at all.
+ */
+const spotifyMatchCache = new Map<string, string>();
+
+function cachedMatchKey(title: string, artist: string): string {
+  return `${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
+}
+
+function cachedMatchGet(title: string, artist: string): { hit: boolean; videoId: string | null } {
+  const v = spotifyMatchCache.get(cachedMatchKey(title, artist));
+  if (v === undefined) return { hit: false, videoId: null };
+  return { hit: true, videoId: v === "!!!missing!!!" ? null : v };
+}
+
+function cachedMatchSet(title: string, artist: string, videoId: string | null): void {
+  spotifyMatchCache.set(cachedMatchKey(title, artist), videoId ? videoId : "!!!missing!!!");
+}
+
+/**
  * Converts SpotifyTrackInfo items to playable Track objects.
  * Immediately resolves the first few tracks to YouTube video IDs,
  * while leaving remaining tracks ready with their metadata and cover art.
@@ -381,14 +409,24 @@ export async function convertSpotifyTracksToPlayerTracks(
     const s = spotifyTracks[i];
     onResolveProgress?.(i, total);
 
-    // Strictly match this exact song to a real YouTube video.
-    // If the original track can't be found on YouTube, SKIP it instead
-    // of importing an unplayable placeholder (per user requirement).
+    // Cache consult FIRST: if we already verified this exact song against
+    // YouTube (hit OR proven-unmatchable), reuse it — ZERO network today.
+    const c = cachedMatchGet(s.title, s.artist);
     let videoId: string | null = null;
-    try {
-      videoId = await matchTrackToYouTube(s.title, s.artist);
-    } catch {
-      /* skip on network error */
+    if (c.hit) {
+      videoId = c.videoId;
+    } else {
+      // Strictly match this exact song to a real YouTube video.
+      // If the original track can't be found on YouTube, SKIP it instead
+      // of importing an unplayable placeholder (per user requirement).
+      try {
+        videoId = await matchTrackToYouTube(s.title, s.artist);
+      } catch {
+        /* skip on network error */
+      }
+      // Remember the verified answer (hit OR "proven missing") so the 2nd
+      // import of this playlist / repeat song is a single Map.get, not a search.
+      cachedMatchSet(s.title, s.artist, videoId);
     }
     if (!videoId) continue;
 

@@ -29,18 +29,24 @@ export interface PublicPlaylistRow {
 
 /** Fetch all public playlists from Supabase (global, from any user) */
 export async function fetchGlobalPublicPlaylists(): Promise<CustomPlaylist[]> {
-  const { data, error } = await supabase
-    .from("public_playlists")
-    .select("*")
-    .order("updated_at", { ascending: false })
-    .limit(100);
+  const rows: PublicPlaylistRow[] = [];
+  const PAGE = 100;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("public_playlists")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .range(from, from + PAGE - 1);
 
-  if (error) {
-    console.warn("[publicPlaylists] fetch error:", error.message);
-    return [];
+    if (error) {
+      console.warn("[publicPlaylists] fetch error:", error.message);
+      break;
+    }
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
   }
 
-  return (data ?? []).map(rowToPlaylist);
+  return rows.map(rowToPlaylist);
 }
 
 /** Publish or update a single playlist in Supabase (upsert) */

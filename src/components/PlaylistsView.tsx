@@ -422,7 +422,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       // Parse line by line for YouTube Video URLs, IDs, or Song Names
       const lines = input.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
       const results: Track[] = [];
-      for (let i = 0; i < Math.min(lines.length, 50); i++) {
+      for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const vid = parseYouTubeId(line) || (line.length === 11 && !line.includes(" ") ? line : null);
         if (vid) {

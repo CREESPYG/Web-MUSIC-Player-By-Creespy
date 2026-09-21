@@ -200,16 +200,16 @@ export async function convertJioSaavnTracksToPlayerTracks(
     } catch {
       /* fallback */
     }
-    const vid = videoId || `js_${encodeURIComponent(it.title).slice(0, 7)}_${Date.now().toString(36)}${i}`;
+    if (!videoId) continue;
 
     out.push({
       id: `js-${Date.now()}-${i}`,
-      videoId: vid,
+      videoId,
       title: it.title,
       artist: it.artist,
       album: it.album || playlistTitle,
       duration: it.duration || 180,
-      thumb: it.image || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+      thumb: it.image || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       artwork: it.image,
       coverUrl: it.image,
       sourceType: "jiosaavn",

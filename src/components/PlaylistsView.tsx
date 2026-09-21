@@ -12,6 +12,16 @@ import {
   matchTrackToYouTube,
 } from "../lib/spotify";
 import {
+  isJioSaavnUrl,
+  loadJioSaavnResource,
+  convertJioSaavnTracksToPlayerTracks,
+} from "../lib/jiosaavn";
+import {
+  isSoundCloudUrl,
+  loadSoundCloudTrack,
+  convertSoundCloudTrackToPlayerTrack,
+} from "../lib/soundcloud";
+import {
   fetchGlobalPublicPlaylists,
   publishPlaylist,
   unpublishPlaylist,
@@ -386,6 +396,74 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
         }
       }
 
+      // Check JioSaavn URL (song / album / playlist import via JioSaavn's keyless webapi.get resolver)
+      if (isJioSaavnUrl(input)) {
+        setImportStatus("Fetching JioSaavn tracks...");
+        const jsResult = await loadJioSaavnResource(input, (done) => {
+          setImportStatus(`Loading JioSaavn tracks ${done}...`);
+        });
+        if (jsResult.items.length) {
+          setImportStatus(`Matching ${jsResult.items.length} songs to audio streams...`);
+          const jsLoaded = await convertJioSaavnTracksToPlayerTracks(jsResult, selectedPlaylist.title, (done, total) => {
+            setImportStatus(`Matching audio streams: ${done}/${total}...`);
+          });
+          const updatedJs = playlists.map((p) => {
+            if (p.id === selectedPlaylist.id) {
+              const existingIds = new Set(p.tracks.map((t) => t.videoId));
+              const newTracks = jsLoaded.filter((t) => !existingIds.has(t.videoId));
+              return {
+                ...p,
+                tracks: [...p.tracks, ...newTracks],
+                cover: p.cover || jsResult.cover || newTracks[0]?.thumb || p.tracks[0]?.thumb,
+                updatedAt: Date.now(),
+              };
+            }
+            return p;
+          });
+          updatePlaylists(updatedJs);
+          if (selectedPlaylist.isPublic) {
+            const pubTarget = updatedJs.find((p) => p.id === selectedPlaylist.id);
+            if (pubTarget) await publishPlaylist(pubTarget);
+          }
+          setImportInput("");
+          setShowImportModal(false);
+          onToast(`Imported ${jsLoaded.length} JioSaavn track${jsLoaded.length === 1 ? "" : "s"} to "${selectedPlaylist.title}"`);
+          return;
+        }
+      }
+
+      // Check SoundCloud track URL (single-track import only; sets/playlists need SoundCloud's API key)
+      if (isSoundCloudUrl(input)) {
+        setImportStatus("Fetching SoundCloud track...");
+        const scInfo = await loadSoundCloudTrack(input, (done, total) => {
+          setImportStatus(`Fetching SoundCloud track ${done}/${total}...`);
+        });
+        setImportStatus(`Matching "${scInfo.title.slice(0, 24)}" to audio stream...`);
+        const scTrack = await convertSoundCloudTrackToPlayerTrack(scInfo, selectedPlaylist.title);
+        const updatedSc = playlists.map((p) => {
+          if (p.id === selectedPlaylist.id) {
+            const existingIds = new Set(p.tracks.map((t) => t.videoId));
+            if (existingIds.has(scTrack.videoId)) return p;
+            return {
+              ...p,
+              tracks: [...p.tracks, scTrack],
+              cover: p.cover || scTrack.thumb || p.tracks[0]?.thumb,
+              updatedAt: Date.now(),
+            };
+          }
+          return p;
+        });
+        updatePlaylists(updatedSc);
+        if (selectedPlaylist.isPublic) {
+          const pubTarget = updatedSc.find((p) => p.id === selectedPlaylist.id);
+          if (pubTarget) await publishPlaylist(pubTarget);
+        }
+        setImportInput("");
+        setShowImportModal(false);
+        onToast(`Imported "${scTrack.title}" from SoundCloud to "${selectedPlaylist.title}"`);
+        return;
+      }
+
       // Check YouTube Playlist ID
       const playlistId = parsePlaylistId(input);
       if (playlistId) {
@@ -493,7 +571,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
         setShowImportModal(false);
         onToast(`Added ${results.length} track${results.length === 1 ? "" : "s"} with album art sync`);
       } else {
-        setImportStatus("Please enter a valid YouTube or Spotify playlist link or song names.");
+        setImportStatus("Please enter a valid YouTube/Spotify/JioSaavn/SoundCloud link or song names.");
       }
     } catch (err: any) {
       setImportStatus(err?.message || "Import failed. Please check the playlist link.");
@@ -1062,12 +1140,18 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                     <span className="rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 text-[9px] font-bold">
                       Spotify
                     </span>
+                    <span className="rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 text-[9px] font-bold">
+                      JioSaavn
+                    </span>
+                    <span className="rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 text-[9px] font-bold">
+                      SoundCloud
+                    </span>
                   </div>
                 </div>
                 <textarea
                   value={importInput}
                   onChange={(e) => setImportInput(e.target.value)}
-                  placeholder="Paste YouTube playlist URL, Spotify playlist/album link, or YouTube video links (1 per line)..."
+                  placeholder="Paste YouTube playlist URL, Spotify playlist/album link, JioSaavn song/album/playlist link, a SoundCloud track link, or YouTube video / song names (1 per line)..."
                   rows={4}
                   required
                   className="w-full rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white placeholder-[var(--dim)] outline-none focus:border-[var(--acc0)] font-mono"

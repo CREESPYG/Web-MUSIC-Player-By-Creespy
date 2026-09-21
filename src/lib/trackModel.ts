@@ -1,4 +1,4 @@
-export type TrackSourceType = "youtube" | "spotify" | "itunes" | "custom";
+export type TrackSourceType = "youtube" | "spotify" | "itunes" | "jiosaavn" | "soundcloud" | "custom";
 
 export interface Track {
   id: string;

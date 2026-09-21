@@ -3,6 +3,16 @@
   publish = "dist"
 
 [[redirects]]
+  from = "/api/jiosaavn/*"
+  to = "https://www.jiosaavn.com/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/spotify-embed/*"
+  to = "https://open.spotify.com/embed/:splat"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

@@ -457,6 +457,7 @@ export function MobilePlaylistScreen({
                         onToast(`Added to Queue`);
                       }}
                       className="grid h-7 w-7 place-items-center rounded-md text-[var(--dim)] transition-colors hover:text-white active:scale-90"
+                      aria-label="Add track to queue"
                     >
                       <PlusIcon size={12} />
                     </button>
@@ -466,6 +467,7 @@ export function MobilePlaylistScreen({
                       className={`grid h-7 w-7 place-items-center rounded-md transition-transform active:scale-90 ${
                         isTrackLiked ? "text-[#f43f5e]" : "text-[var(--dim)] hover:text-white"
                       }`}
+                      aria-label={isTrackLiked ? "Unlike track" : "Like track"}
                     >
                       <HeartIcon size={12} filled={isTrackLiked} />
                     </button>
@@ -474,6 +476,7 @@ export function MobilePlaylistScreen({
                         type="button"
                         onClick={() => removeTrackFromPlaylist(pl, realIdx)}
                         className="grid h-7 w-7 place-items-center rounded-md text-[var(--dim)] transition-colors hover:text-[#f43f5e] active:scale-90"
+                        aria-label="Remove from playlist"
                       >
                         <TrashIcon size={11} />
                       </button>

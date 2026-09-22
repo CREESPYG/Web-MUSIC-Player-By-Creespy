@@ -112,6 +112,8 @@ export function usePlayer(
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [durations, setDurations] = useState<Record<string, number>>({});
+  const durationsRef = useRef(durations);
+  durationsRef.current = durations;
 
   // Phase 11 — initialize playback controls from the persisted session.
   const savedPb = persistence.getPlayback();
@@ -142,6 +144,7 @@ export function usePlayer(
   const pendingRef = useRef<{ id: string; autoplay: boolean } | null>(null);
   const recentRef = useRef<string[]>([]);
   const topUpAtRef = useRef(0);
+  const autoDoneRef = useRef<Set<string>>(new Set());
   const topUpCb = useRef(onTopUp);
   topUpCb.current = onTopUp;
   const onErrorRef = useRef(onError);
@@ -204,6 +207,20 @@ export function usePlayer(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Repeat-off, shuffle/magic mode: count each track played once per run, then stop. */
+  const endOfRunStop = (trackId: string | undefined, len: number) => {
+    if (trackId) autoDoneRef.current.add(trackId);
+    if (autoDoneRef.current.size < len) return;
+    autoDoneRef.current.clear();
+    try {
+      pRef.current?.pauseVideo?.();
+    } catch {
+      /* noop */
+    }
+    playingRef.current = false;
+    setPlaying(false);
+  };
+
   const advance = useCallback((auto: boolean) => {
     const list = tracksRef.current;
     const len = list.length;
@@ -211,10 +228,12 @@ export function usePlayer(
     const mode = shuffleRef.current;
 
     if (mode === "magic") {
+      if (repeatRef.current === "off" && auto) endOfRunStop(list[idxRef.current]?.id, len);
       cue(pickMagicIndex(list, idxRef.current, recentRef.current), true);
       return;
     }
     if (mode === "random" && len > 1) {
+      if (repeatRef.current === "off" && auto) endOfRunStop(list[idxRef.current]?.id, len);
       let ni = idxRef.current;
       while (ni === idxRef.current) ni = Math.floor(Math.random() * len);
       cue(ni, true);
@@ -672,6 +691,7 @@ export function usePlayer(
     setRepeat((r) => {
       const n: RepeatMode = r === "off" ? "all" : r === "all" ? "one" : "off";
       repeatRef.current = n;
+      if (n === "off") autoDoneRef.current.clear();
       return n;
     });
   }, []);

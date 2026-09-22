@@ -931,7 +931,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                 ) : (
                   visible.map((t, idx) => (
                     <div
-                      key={`${t.id || t.videoId}-${idx}`}
+                      key={t.id || t.videoId || `trk-${idx}`}
                       className="group flex items-center justify-between rounded-xl p-2 hover:bg-white/[0.05] transition-colors"
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1050,6 +1050,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                               disabled={idx === 0}
                               className="rounded-lg p-1 text-[var(--dim)] hover:bg-white/10 hover:text-white disabled:opacity-25"
                               title="Move up"
+                              aria-label="Move track up"
                             >
                               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M18 15l-6-6-6 6" />
@@ -1060,6 +1061,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                               disabled={idx === filteredTracks.length - 1}
                               className="rounded-lg p-1 text-[var(--dim)] hover:bg-white/10 hover:text-white disabled:opacity-25"
                               title="Move down"
+                              aria-label="Move track down"
                             >
                               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M6 9l6 6 6-6" />

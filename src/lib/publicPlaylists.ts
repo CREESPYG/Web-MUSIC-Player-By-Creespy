@@ -113,9 +113,7 @@ export function subscribeToPublicPlaylists(
       }
     )
     .subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        console.log("[publicPlaylists] realtime subscribed");
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+      if (status !== "SUBSCRIBED") {
         console.warn("[publicPlaylists] realtime subscription failed:", status);
       }
     });

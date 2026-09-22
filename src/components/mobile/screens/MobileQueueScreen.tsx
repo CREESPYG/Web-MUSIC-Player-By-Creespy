@@ -80,7 +80,7 @@ export function MobileQueueScreen({
 
           return (
             <div
-              key={`${tr.id || tr.videoId}-${idx}`}
+              key={tr.id || tr.videoId || `trk-${idx}`}
               onClick={() => player.select(idx)}
               className={`flex items-center justify-between gap-2.5 rounded-xl border p-2 transition-all active:scale-[0.99] ${
                 isPlaying

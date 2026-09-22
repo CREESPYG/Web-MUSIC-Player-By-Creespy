@@ -14,9 +14,7 @@ if (typeof window !== "undefined" && "serviceWorker" in navigator && process.env
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")
-      .then((reg) => {
-        console.log("PWA Service Worker registered:", reg.scope);
-      })
+      .then(() => undefined)
       .catch((err) => {
         console.warn("PWA Service Worker registration skipped:", err);
       });

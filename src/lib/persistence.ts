@@ -48,6 +48,8 @@ export interface AppPreferences {
   skipLanding: boolean;
   reducedMotion: boolean;
   visualizerMode: "circle" | "wave" | "bars" | "off";
+  /** Phase 10 — auto-queue "Up Next" suggested songs when the queue runs low. */
+  autoQueue: boolean;
   bgStyle: "dynamic" | "solid" | "wave" | "media";
   bgBlur: number;
   bgDim: number;
@@ -119,6 +121,7 @@ const DEFAULT_STORE: PersistentStoreSchema = {
     skipLanding: false,
     reducedMotion: false,
     visualizerMode: "circle",
+    autoQueue: true,
     bgStyle: "dynamic",
     bgBlur: 14,
     bgDim: 0.5,

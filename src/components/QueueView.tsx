@@ -4,6 +4,7 @@ import type { Track } from "../lib/trackModel";
 import { fmtTime } from "../lib/color";
 import { SparkIcon } from "./UiIcons";
 import { cn } from "../utils/cn";
+import { useIncrementalList } from "../hooks/useIncrementalList";
 
 interface QueueViewProps {
   tracks: Track[];
@@ -32,6 +33,8 @@ export function QueueView({
 }: QueueViewProps) {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
+
+  const { containerRef, sentinelRef, visible, hasMore } = useIncrementalList(tracks);
 
   const currentTrack = tracks[currentIndex] || tracks[0];
 
@@ -100,6 +103,7 @@ export function QueueView({
               <img
                 src={currentTrack.thumb}
                 alt={currentTrack.title}
+                loading="lazy"
                 className={cn("h-full w-full object-cover", isPlaying ? "disc-spin disc-spin-on" : "")}
               />
             </div>
@@ -132,13 +136,13 @@ export function QueueView({
           Up Next in Sequence ({tracks.length} tracks)
         </h2>
 
-        <div className="space-y-1.5 max-h-[55vh] overflow-y-auto no-scrollbar">
-          {tracks.map((track, idx) => {
+        <div ref={containerRef} className="space-y-1.5 max-h-[55vh] overflow-y-auto no-scrollbar">
+          {visible.map((track, idx) => {
             const isCurrent = idx === currentIndex;
 
             return (
               <motion.div
-                key={`${track.videoId}-${idx}`}
+                key={`${track.videoId || track.id}-${idx}`}
                 layout
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -167,6 +171,7 @@ export function QueueView({
                   <img
                     src={track.thumb}
                     alt={track.title}
+                    loading="lazy"
                     className="h-9 w-9 shrink-0 rounded-xl object-cover ring-1 ring-white/10"
                   />
 
@@ -205,6 +210,8 @@ export function QueueView({
               </motion.div>
             );
           })}
+
+          {hasMore && <div ref={sentinelRef} className="h-4" aria-hidden />}
         </div>
       </div>
 

@@ -55,6 +55,11 @@ import { MobileShell } from "./components/mobile/MobileShell";
 
 type MobileTab = "queue" | "clock";
 
+/** Dedup/sync key that survives unresolved tracks (no videoId yet). */
+function queueKey(t: Track): string {
+  return t.videoId ? `v:${t.videoId}` : t.id ? `id:${t.id}` : `u:${t.sourceUrl || ""}`;
+}
+
 export default function App() {
   /* ---------------- memory lifecycle manager ---------------- */
   useEffect(() => {
@@ -235,6 +240,62 @@ export default function App() {
   const track = tracks[player.index] ?? tracks[0];
   useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time);
 
+  /* ---------------- Phase 10 — "Up Next" auto-queue -----------------------
+   * While the user is listening and the queue is about to run out (regular
+   * shuffle modes), fetch ONE suggestion and append it. Veto = remove it from
+   * the queue (existing trash button). Toggle lives in Settings (persisted, so
+   * it survives refresh). The known-set includes the whole queue PLUS recently
+   * played history so a suggested track can never immediately replay itself.
+   * Appending via setTracks never interrupts current playback. */
+  const upNextAtRef = useRef(0);
+  useEffect(() => {
+    if (!player.playing) return;
+    if (player.shuffleMode === "magic") return; // magic has its own 24-slot top-up
+    if (!persistence.getPreferences().autoQueue) return;
+    if (similarBusy) return;
+    const remaining = tracks.length - (player.index + 1);
+    if (remaining > 2) return;
+    const cur = tracksRef.current[player.index];
+    if (!cur?.videoId) return;
+    if (Date.now() < upNextAtRef.current) return;
+    upNextAtRef.current = Date.now() + 20_000;
+
+    const known = new Set<string>();
+    tracksRef.current.forEach((t) => {
+      if (t.videoId) known.add(t.videoId);
+      if (t.sourceTrackId) known.add(`st:${t.sourceTrackId}`);
+    });
+    persistence
+      .getTrackHistory()
+      .slice(0, 30)
+      .forEach((h) => {
+        if (h.track.videoId) known.add(h.track.videoId);
+      });
+
+    fetchSimilar(cur.videoId, known, 1, cur)
+      .then(({ tracks: found }) => {
+        if (!found.length) return;
+        setTracks((prev) => {
+          const next = [...prev];
+          for (const f of found) {
+            const exists = next.some(
+              (m) =>
+                m.videoId === f.videoId ||
+                (f.sourceTrackId && m.sourceTrackId === f.sourceTrackId)
+            );
+            if (!exists) next.push(f);
+          }
+          saveCustomTracks(next);
+          return next;
+        });
+        pushToast(`Up Next: "${found[0].title}"`);
+      })
+      .catch(() => {
+        /* discovery offline — stay silent in auto mode */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.playing, player.shuffleMode, player.index, tracks.length, similarBusy]);
+
   /* ---------------- native Android audio bridge ---------------- */
   useNativeAudioBridge(
     track,
@@ -249,23 +310,73 @@ export default function App() {
     setMemoryGovernorPlayerActive(player.playing);
   }, [player.playing]);
 
-  // Restore last played track + position on mount
+  /* Phase 11 — persist playback controls on every change.
+   * Volume / mute / rate / shuffle / repeat / current trackId are saved so a
+   * refresh restores the exact listening settings (usePlayer re-hydrates them). */
+  useEffect(() => {
+    persistence.setPlayback({
+      trackId: tracksRef.current[playerRef.current?.index ?? 0]?.videoId ?? null,
+      volume: player.volume,
+      muted: player.muted,
+      rate: player.rate,
+      shuffleMode: player.shuffleMode,
+      repeatMode: player.repeat,
+    });
+  }, [player.volume, player.muted, player.rate, player.shuffleMode, player.repeat]);
+
+  // Restore last played session on mount — exact queue order, current index,
+  // and position (settings were already re-hydrated inside usePlayer).
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
     const lp = persistence.getLastPlayed();
     if (!lp) return;
-    // Find track index in current queue
-    const idx = tracks.findIndex((t) => t.videoId === lp.trackVideoId);
-    if (idx === -1) return;
-    // Cue the track (not autoplay) then seek to saved position
-    player.cue(idx, false);
-    if (lp.position > 0) {
-      window.setTimeout(() => {
-        playerRef.current?.seek(lp.position);
-      }, 800);
+
+    // Reconstruct the exact session queue (full Track objects) from every
+    // known source, ordered by the saved queueVideoIds.
+    const saved = lp.queueVideoIds || [];
+    let reordered: Track[] = [];
+    if (saved.length) {
+      const known = new Map<string, Track>();
+      const indexTrack = (t: Track) => {
+        const k = t.videoId || t.id;
+        if (k && !known.has(k)) known.set(k, t);
+      };
+      persistence.getPlaylists().forEach((pl) => (pl.tracks || []).forEach(indexTrack));
+      loadCustomTracks().forEach(indexTrack);
+      TRACKS.forEach(indexTrack);
+      const seen = new Set<string>();
+      for (const id of saved) {
+        const t = known.get(id);
+        if (t && !seen.has(id)) {
+          seen.add(id);
+          reordered.push(t);
+        }
+      }
     }
+
+    const cueSaved = (idx: number) => {
+      window.setTimeout(() => {
+        const p = playerRef.current;
+        if (!p) return;
+        p.cue(idx, false);
+        if (lp.position > 0) p.seek(lp.position);
+      }, 0);
+    };
+
+    if (reordered.length) {
+      const kept = tracksRef.current.filter((t) => !reordered.some((r) => (r.videoId || r.id) === (t.videoId || t.id)));
+      setTracks([...reordered, ...kept]);
+      const idx = reordered.findIndex((t) => t.videoId === lp.trackVideoId);
+      cueSaved(idx >= 0 ? idx : 0);
+      return;
+    }
+
+    // Fallback: current queue, locate by track id.
+    const idx = tracksRef.current.findIndex((t) => t.videoId === lp.trackVideoId);
+    if (idx === -1) return;
+    cueSaved(idx);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save last played track + position periodically
@@ -1040,17 +1151,17 @@ export default function App() {
                      saveCustomTracks(list);
                      pushToast(`Playing playlist (${list.length} tracks)`);
                    }}
-                   onAddPlaylistToQueue={(list) => {
-                     if (!list.length) return;
-                     setTracks((prev) => {
-                       const existing = new Set(prev.map((x) => x.videoId));
-                       const added = list.filter((x) => !existing.has(x.videoId));
-                       const next = [...prev, ...added];
-                       saveCustomTracks(next);
-                       return next;
-                     });
-            pushToast(`Added ${list.length} tracks to queue`);
-          }}
+onAddPlaylistToQueue={(list) => {
+                       if (!list.length) return;
+                       setTracks((prev) => {
+                         const existing = new Set(prev.map(queueKey));
+                         const added = list.filter((x) => !existing.has(queueKey(x)));
+                         const next = [...prev, ...added];
+                         saveCustomTracks(next);
+                         return next;
+                       });
+             pushToast(`Added ${list.length} tracks to queue`);
+           }}
           onRemoveTrack={removeTrack}
           onReorderTrack={handleReorder}
           onFindSimilar={() => topUpSimilar(true)}
@@ -1150,7 +1261,7 @@ export default function App() {
                 <PlaylistsView
                   onPlayTrack={(t) => {
                     setTracks((prev) => {
-                      const existingIdx = prev.findIndex((x) => x.videoId === t.videoId);
+                      const existingIdx = prev.findIndex((x) => x.videoId && x.videoId === t.videoId);
                       if (existingIdx !== -1) {
                         player.select(existingIdx);
                         return prev;
@@ -1165,7 +1276,7 @@ export default function App() {
                   }}
                   onAddToQueue={(t) => {
                     setTracks((prev) => {
-                      if (prev.some((x) => x.videoId === t.videoId)) return prev;
+                      if (prev.some((x) => x.videoId && x.videoId === t.videoId)) return prev;
                       const next = [...prev, t];
                       saveCustomTracks(next);
                       return next;
@@ -1181,8 +1292,8 @@ export default function App() {
                    }}
                   onAddPlaylistToQueue={(list) => {
                     setTracks((prev) => {
-                      const existing = new Set(prev.map((x) => x.videoId));
-                      const added = list.filter((x) => !existing.has(x.videoId));
+                      const existing = new Set(prev.map(queueKey));
+                      const added = list.filter((x) => !existing.has(queueKey(x)));
                       const next = [...prev, ...added];
                       saveCustomTracks(next);
                       return next;

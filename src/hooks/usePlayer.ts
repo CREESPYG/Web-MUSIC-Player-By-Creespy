@@ -2,12 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Track } from "../data/tracks";
 import { loadYouTubeAPI, YTState } from "../lib/youtube";
 import { pickMagicIndex } from "../lib/media";
+import { persistence } from "../lib/persistence";
 
 export type RepeatMode = "off" | "all" | "one";
 export type ShuffleMode = "off" | "random" | "magic";
 export const RATES = [1, 1.25, 1.5, 0.75];
 
 const TOPUP_AT_MS = 45_000; // start fetching similar when the track is this old
+
+/** Nearest playable index scanning `dir` (1 forward / -1 backward) with wrap. */
+function nextPlayableIndex(list: Track[], from: number, dir: 1 | -1): number {
+  const len = list.length;
+  if (!len) return -1;
+  for (let k = 0; k < len; k++) {
+    const raw = dir === 1 ? from + k : from - k;
+    const i = ((raw % len) + len) % len;
+    if (list[i]?.videoId) return i;
+  }
+  return -1;
+}
 
 /** Check if current browser is iOS Safari where background audio needs keepalive */
 function isIOS(): boolean {
@@ -99,19 +112,27 @@ export function usePlayer(
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [durations, setDurations] = useState<Record<string, number>>({});
-  const [volume, setVolume] = useState(80);
-  const [muted, setMuted] = useState(false);
-  const [rateIdx, setRateIdx] = useState(0);
-  const [shuffleMode, setShuffleMode] = useState<ShuffleMode>("magic");
-  const [repeat, setRepeat] = useState<RepeatMode>("all");
+
+  // Phase 11 — initialize playback controls from the persisted session.
+  const savedPb = persistence.getPlayback();
+  const savedRateIdx = RATES.indexOf(savedPb?.rate as number);
+  const [volume, setVolume] = useState(savedPb?.volume ?? 80);
+  const [muted, setMuted] = useState(savedPb?.muted ?? false);
+  const [rateIdx, setRateIdx] = useState(savedRateIdx >= 0 ? savedRateIdx : 0);
+  const [shuffleMode, setShuffleMode] = useState<ShuffleMode>(
+    savedPb?.shuffleMode === "off" || savedPb?.shuffleMode === "random" ? savedPb.shuffleMode : "magic"
+  );
+  const [repeat, setRepeat] = useState<RepeatMode>(
+    savedPb?.repeatMode === "off" || savedPb?.repeatMode === "one" ? savedPb.repeatMode : "all"
+  );
 
   const pRef = useRef<any>(null);
   const idxRef = useRef(0);
   const playingRef = useRef(false);
-  const shuffleRef = useRef<ShuffleMode>("magic");
-  const repeatRef = useRef<RepeatMode>("all");
-  const volRef = useRef(80);
-  const mutedRef = useRef(false);
+  const shuffleRef = useRef<ShuffleMode>(savedPb?.shuffleMode === "off" || savedPb?.shuffleMode === "random" ? savedPb.shuffleMode : "magic");
+  const repeatRef = useRef<RepeatMode>(savedPb?.repeatMode === "off" || savedPb?.repeatMode === "one" ? savedPb.repeatMode : "all");
+  const volRef = useRef(savedPb?.volume ?? 80);
+  const mutedRef = useRef(savedPb?.muted ?? false);
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
   const startedRef = useRef(false);
@@ -133,7 +154,22 @@ export function usePlayer(
   const cue = useCallback((i: number, autoplay: boolean) => {
     const list = tracksRef.current;
     if (!list.length) return;
-    const n = ((i % list.length) + list.length) % list.length;
+    let n = ((i % list.length) + list.length) % list.length;
+    // An UNRESOLVED track has no playable source (videoId) — jump to the next
+    // playable one instead of silently stopping (Phase 7 unresolved handling).
+    if (!list[n]?.videoId) {
+      const pi = nextPlayableIndex(list, n, 1);
+      if (pi === -1) {
+        idxRef.current = n;
+        setIndex(n);
+        setTime(0);
+        setBuffered(0);
+        setDuration(durations[list[n]?.id] || 0);
+        setPlaying(false);
+        return;
+      }
+      n = pi;
+    }
     idxRef.current = n;
     setIndex(n);
     setTime(0);
@@ -475,7 +511,12 @@ export function usePlayer(
   /* ---------- controls ---------- */
   const toggle = useCallback(() => {
     const p = pRef.current;
-    if (!p?.playVideo) return;
+    if (!p?.playVideo) {
+      // Player not mounted yet — park the autoplay intent for onReady.
+      const cur = tracksRef.current[idxRef.current];
+      if (cur?.videoId) pendingRef.current = { id: cur.videoId, autoplay: true };
+      return;
+    }
     try {
       if (playingRef.current) {
         p.pauseVideo();
@@ -484,6 +525,48 @@ export function usePlayer(
         p.playVideo();
         requestWakeLock();
       }
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  /** Explicit play — one authoritative path (state syncs via onStateChange). */
+  const play = useCallback(() => {
+    const p = pRef.current;
+    const list = tracksRef.current;
+    if (!p?.playVideo) {
+      const cur = list[idxRef.current];
+      if (cur?.videoId) pendingRef.current = { id: cur.videoId, autoplay: true };
+      return;
+    }
+    if (!startedRef.current && list.length && list[idxRef.current]) {
+      cue(idxRef.current, true);
+      return;
+    }
+    startedRef.current = true;
+    try {
+      p.playVideo();
+    } catch {
+      /* noop */
+    }
+  }, [cue]);
+
+  /** Explicit pause — one authoritative path (state syncs via onStateChange). */
+  const pause = useCallback(() => {
+    try {
+      pRef.current?.pauseVideo?.();
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  /** Absolute mute control (Phase 8). */
+  const setMute = useCallback((m: boolean) => {
+    mutedRef.current = m;
+    setMuted(m);
+    try {
+      if (m) pRef.current?.mute?.();
+      else pRef.current?.unMute?.();
     } catch {
       /* noop */
     }
@@ -524,7 +607,9 @@ export function usePlayer(
     } catch {
       /* noop */
     }
-    cue(idxRef.current - 1, true);
+    const list = tracksRef.current;
+    const pi = nextPlayableIndex(list, idxRef.current - 1, -1);
+    cue(pi === -1 ? idxRef.current - 1 : pi, true);
   }, [cue]);
 
   const seek = useCallback((s: number) => {
@@ -606,9 +691,12 @@ export function usePlayer(
     shuffleMode,
     repeat,
     toggle,
+    play,
+    pause,
     select,
     loadAndPlay,
     cue,
+    setMute,
     next: () => advance(false),
     prev,
     seek,

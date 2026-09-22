@@ -125,8 +125,15 @@ export function makeTrack(
     custom: true,
     source,
     sourceType: "youtube",
+    sourcePlatform: "youtube",
     sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+    sourceTrackId: videoId,
     duration,
+    metadataConfidence: "EXACT",
+    playable: true,
+    playableSource: videoId,
+    playableSourceType: "youtube",
+    resolverStatus: "EXACT",
   };
 }
 

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { Track } from "../lib/media";
 import { similarity } from "../lib/media";
 import type { PlayerApi } from "../hooks/usePlayer";
+import { useIncrementalList } from "../hooks/useIncrementalList";
 import { fmtTime } from "../lib/color";
 import { cn } from "../utils/cn";
 import { PlayIcon } from "./Icons";
@@ -35,6 +36,8 @@ export function Playlist({
   const [openInput, setOpenInput] = useState(false);
   const current = tracks[player.index];
   const magic = player.shuffleMode === "magic";
+
+  const { containerRef, sentinelRef, visible, hasMore } = useIncrementalList<Track, HTMLUListElement, HTMLLIElement>(tracks);
 
   const submit = () => {
     if (!draft.trim()) return;
@@ -133,8 +136,8 @@ export function Playlist({
       </AnimatePresence>
 
       {/* Track list with order management */}
-      <ul className="scroll-slim flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-        {tracks.map((t, i) => {
+      <ul ref={containerRef} className="scroll-slim flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+        {visible.map((t, i) => {
           const active = i === player.index;
           const dur = player.durations[t.id] ?? t.duration;
           const match = current && !active ? Math.round(similarity(current, t) * 100) : 0;
@@ -254,6 +257,11 @@ export function Playlist({
             </li>
           );
         })}
+        {hasMore && (
+          <li ref={sentinelRef} className="grid place-items-center py-2 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]">
+            scrolling to load more…
+          </li>
+        )}
       </ul>
     </div>
   );

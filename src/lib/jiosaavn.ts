@@ -1,13 +1,15 @@
 import type { Track } from "./media";
-import { matchTrackToYouTube } from "./spotify";
+import { resolvePlayableSource } from "./resolver";
 
 export interface JioSaavnTrackItem {
   title: string;
   artist: string;
+  artists?: string[];
   album?: string;
   image?: string;
   duration?: number;
   sourceUrl?: string;
+  sourceTrackId?: string;
 }
 
 export interface JioSaavnImportResult {
@@ -96,16 +98,26 @@ function itemFromSongObj(o: any): JioSaavnTrackItem {
     .filter(Boolean);
   const artistField = parts[0] || o?.more_info?.artists || o?.more_info?.singers || "";
   const albumField = parts[1] || o?.more_info?.album || undefined;
+  const artist = String(artistField).trim() || "JioSaavn Artist";
+  const artists =
+    artist.includes(",") || artist.includes(" x ")
+      ? artist
+          .split(/[,;x&]/)
+          .map((a) => a.trim())
+          .filter(Boolean)
+          .map((a) => a.replace(/\bft\.?\s+/i, "").trim())
+          .slice(0, 8)
+      : artist.split(/,\s*/).filter(Boolean).slice(0, 8);
 
   return {
     title: String(o?.title || o?.song || "Untitled JioSaavn Track").trim(),
-    artist: String(artistField)
-      .split(",")[0]
-      ?.trim() || "JioSaavn Artist",
+    artist: artist.split(",")[0]?.trim() || "JioSaavn Artist",
+    artists,
     album: albumField ? String(albumField).trim() : undefined,
     image: o?.image ? String(o.image).replace(/150x150\.jpg$/, "500x500.jpg") : undefined,
     duration: typeof o?.more_info?.duration === "number" ? o.more_info.duration : undefined,
     sourceUrl: o?.perma_url ? String(o.perma_url) : undefined,
+    sourceTrackId: o?.id ? String(o.id) : undefined,
   };
 }
 
@@ -184,7 +196,11 @@ export async function loadJioSaavnResource(
   };
 }
 
-/** Resolves JioSaavn tracks to playable YouTube-backed Track objects. */
+/**
+ * Converts JioSaavn tracks to normalized CREESPY Tracks. Every source track is
+ * kept (unresolved ones stay with resolverStatus = "UNRESOLVED" and
+ * playable = false) — nothing is silently dropped from the imported playlist.
+ */
 export async function convertJioSaavnTracksToPlayerTracks(
   result: JioSaavnImportResult,
   playlistTitle: string,
@@ -192,35 +208,62 @@ export async function convertJioSaavnTracksToPlayerTracks(
   isCancelled?: () => boolean
 ): Promise<Track[]> {
   const out: Track[] = [];
+  const batchStamp = Date.now().toString(36);
   for (let i = 0; i < result.items.length; i++) {
     if (isCancelled?.()) break;
     onProgress?.(i, result.items.length);
     const it = result.items[i];
-    let videoId: string | null = null;
-    try {
-      videoId = await matchTrackToYouTube(it.title, it.artist);
-    } catch {
-      /* fallback */
-    }
-    if (!videoId) continue;
+    const title = String(it.title || "Untitled JioSaavn Track").trim();
+    const artist = (String(it.artist || "").trim() || "JioSaavn Artist").split(",")[0].trim();
+    const artists =
+      it.artists && it.artists.length
+        ? it.artists
+        : artist.includes(",")
+          ? artist
+              .split(",")
+              .map((a) => a.trim())
+              .filter(Boolean)
+          : [artist];
+
+    const resolved = await resolvePlayableSource({
+      title,
+      artist,
+      artists,
+      album: it.album || playlistTitle,
+      duration: it.duration,
+      sourceTrackId: it.sourceTrackId,
+    });
+
+    const videoId = resolved.videoId || "";
+    const art = videoId
+      ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+      : it.image;
 
     out.push({
-      id: `js-${Date.now()}-${i}`,
+      id: `js-${batchStamp}-${i}`,
       videoId,
-      title: it.title,
-      artist: it.artist,
+      title,
+      artist,
+      artists,
       album: it.album || playlistTitle,
-      duration: it.duration || 180,
-      thumb: it.image || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      artwork: it.image,
-      coverUrl: it.image,
+      duration: it.duration,
+      thumb: art,
+      artwork: art,
+      coverUrl: art,
       sourceType: "jiosaavn",
+      sourcePlatform: "jiosaavn",
       sourceUrl: it.sourceUrl,
+      sourceTrackId: it.sourceTrackId,
       source: "custom",
       tag: "JioSaavn",
-      bpm: 100,
-      seed: 1,
+      playlistPosition: i + 1,
+      seed: i + 1,
       addedAt: Date.now(),
+      metadataConfidence: resolved.metadataConfidence,
+      playable: Boolean(videoId),
+      playableSource: videoId || undefined,
+      playableSourceType: resolved.playableSourceType,
+      resolverStatus: resolved.status,
     });
   }
   return out;

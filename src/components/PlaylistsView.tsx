@@ -1,27 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "../utils/cn";
 import { persistence, type CustomPlaylist, subscribeToPlaylistChanges } from "../lib/persistence";
 import type { Track } from "../lib/trackModel";
 import { loadYouTubePlaylist } from "../lib/playlist";
 import { fetchTrackMeta, parsePlaylistId, parseYouTubeId } from "../lib/media";
 import { userId } from "../lib/room";
-import { bgImport } from "../lib/bgImport";
-import {
-  isSpotifyUrl,
-  loadSpotifyData,
-  convertSpotifyTracksToPlayerTracks,
-  matchTrackToYouTube,
-} from "../lib/spotify";
-import {
-  isJioSaavnUrl,
-  loadJioSaavnResource,
-  convertJioSaavnTracksToPlayerTracks,
-} from "../lib/jiosaavn";
-import {
-  isSoundCloudUrl,
-  loadSoundCloudTrack,
-  convertSoundCloudTrackToPlayerTrack,
-} from "../lib/soundcloud";
+import { loadViaAdapter } from "../lib/adapters";
+import { useIncrementalList } from "../hooks/useIncrementalList";
+import { matchTrackToYouTube } from "../lib/spotify";
 import {
   fetchGlobalPublicPlaylists,
   publishPlaylist,
@@ -45,6 +31,25 @@ import {
   GlobeIcon,
   LockIcon,
 } from "./UiIcons";
+
+/** Dedup identity that survives unresolved tracks (which have no videoId yet). */
+function trackDedupKey(t: Track): string {
+  return t.videoId
+    ? `v:${t.videoId}`
+    : t.sourceTrackId
+      ? `st:${t.sourceTrackId}`
+      : t.sourceUrl
+        ? `u:${t.sourceUrl}`
+        : `id:${t.id}`;
+}
+
+/** Import summary line — Total / Playable / Unresolved (Phase 7 numbers). */
+function importSummary(tracks: Track[]): string {
+  const total = tracks.length;
+  const unresolved = tracks.filter((t) => !t.playable || t.resolverStatus === "UNRESOLVED" || t.resolverStatus === "LOW").length;
+  const playable = total - unresolved;
+  return `Total: ${total} · Playable: ${playable} · Unresolved: ${unresolved}`;
+}
 
 interface PlaylistsViewProps {
   onPlayTrack: (track: Track) => void;
@@ -203,14 +208,40 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     (activeTab === "global" ? globalPublicPlaylists[0] : null) ||
     (activeTab === "private" ? playlists.filter((p) => !p.isPublic)[0] : null);
 
-  const filteredTracks = selectedPlaylist
-    ? selectedPlaylist.tracks.filter(
-        (t) =>
-          !filterQuery.trim() ||
-          t.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-          t.artist.toLowerCase().includes(filterQuery.toLowerCase())
-      )
-    : [];
+  // Memoized so identity stays stable across parent re-renders — otherwise the
+// incremental list would reset its window on every render (QA fix).
+  const filteredTracks = useMemo(
+    () =>
+      selectedPlaylist
+        ? selectedPlaylist.tracks.filter(
+            (t) =>
+              !filterQuery.trim() ||
+              t.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
+              t.artist.toLowerCase().includes(filterQuery.toLowerCase())
+          )
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedPlaylist?.id, selectedPlaylist?.tracks, filterQuery]
+  );
+
+  const { containerRef, sentinelRef, visible, hasMore } = useIncrementalList(filteredTracks);
+
+  // Phase 9 — useful import information for the selected playlist header.
+  const importInfo = (() => {
+    if (!selectedPlaylist || selectedPlaylist.tracks.length === 0) return null;
+    const tracks = selectedPlaylist.tracks;
+    const total = tracks.length;
+    const unresolved = tracks.filter(
+      (t) => !t.playable || t.resolverStatus === "UNRESOLVED" || t.resolverStatus === "LOW"
+    ).length;
+    const playable = total - unresolved;
+    const bySrc = tracks.reduce<Record<string, number>>((acc, t) => {
+      const k = t.sourcePlatform || "unknown";
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    return { total, playable, unresolved, bySrc };
+  })();
 
   const handleCreatePlaylist = (e: React.FormEvent) => {
     e.preventDefault();
@@ -290,6 +321,24 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     onToast("Track removed from playlist");
   };
 
+  /** Phase 9 — reorder a track within a playlist by index (in-place move). */
+  const handleMoveTrack = (playlistId: string, from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    const updated = playlists.map((p) => {
+      if (p.id !== playlistId) return p;
+      const tracks = [...p.tracks];
+      if (from >= tracks.length || to >= tracks.length) return p;
+      const [moved] = tracks.splice(from, 1);
+      tracks.splice(to, 0, moved);
+      return { ...p, tracks, updatedAt: Date.now() };
+    });
+    updatePlaylists(updated);
+    const target = updated.find((p) => p.id === playlistId);
+    if (target?.isPublic) {
+      void publishPlaylist(target);
+    }
+  };
+
   const handleStartEdit = (pl: CustomPlaylist) => {
     setEditingPlaylistId(pl.id);
     setEditTitle(pl.title);
@@ -321,7 +370,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
   const handleAddToPlaylist = async (track: Track, playlistId: string) => {
     const updated = playlists.map((p) => {
       if (p.id === playlistId) {
-        const exists = p.tracks.some((t) => t.videoId === track.videoId);
+        const exists = p.tracks.some((t) => trackDedupKey(t) === trackDedupKey(track));
         if (exists) {
           onToast(`"${track.title}" is already in "${p.title}"`);
           return p;
@@ -355,33 +404,19 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     try {
       const input = importInput.trim();
 
-      // Check Spotify URL first
-      if (isSpotifyUrl(input)) {
-        setImportStatus("Fetching Spotify metadata & tracks...");
-        const spData = await loadSpotifyData(input, (done, total) => {
-          setImportStatus(`Loading Spotify tracks ${done}/${total}...`);
-        });
-
-        if (spData.tracks.length > 0) {
-          setImportStatus(`Matching ${spData.tracks.length} songs to audio streams...`);
-          const loaded = await convertSpotifyTracksToPlayerTracks(
-            spData.tracks,
-            spData.title,
-            (done, total) => {
-              setImportStatus(`Matching ${done}/${total} audio streams...`);
-              bgImport.setProgress(done, total, `Matching ${done}/${total} audio streams...`);
-            },
-            () => bgImport.get().cancelled
-          );
-
+      // Phase 12 — dispatch through the source-adapter registry.
+      // A new source only needs a registered adapter; no core changes.
+      const result = await loadViaAdapter(input, selectedPlaylist.title, setImportStatus);
+      if (result && result.tracks.length) {
+        const existingKeys = new Set(selectedPlaylist.tracks.map(trackDedupKey));
+        const newTracks = result.tracks.filter((t) => !existingKeys.has(trackDedupKey(t)));
+        if (newTracks.length) {
           const updated = playlists.map((p) => {
             if (p.id === selectedPlaylist.id) {
-              const existingIds = new Set(p.tracks.map((t) => t.id));
-              const newTracks = loaded.filter((t) => !existingIds.has(t.id));
               return {
                 ...p,
                 tracks: [...p.tracks, ...newTracks],
-                cover: p.cover || spData.cover || newTracks[0]?.thumb || p.tracks[0]?.thumb,
+                cover: p.cover || result.cover || newTracks[0]?.thumb || p.tracks[0]?.thumb,
                 updatedAt: Date.now(),
               };
             }
@@ -392,78 +427,12 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
             const pubTarget = updated.find((p) => p.id === selectedPlaylist.id);
             if (pubTarget) await publishPlaylist(pubTarget);
           }
-          setImportInput("");
-          setShowImportModal(false);
-          onToast(`Imported ${loaded.length} Spotify tracks to "${selectedPlaylist.title}"`);
-          return;
-        }
-      }
-
-      // Check JioSaavn URL (song / album / playlist import via JioSaavn's keyless webapi.get resolver)
-      if (isJioSaavnUrl(input)) {
-        setImportStatus("Fetching JioSaavn tracks...");
-        const jsResult = await loadJioSaavnResource(input, (done) => {
-          setImportStatus(`Loading JioSaavn tracks ${done}...`);
-        });
-        if (jsResult.items.length) {
-          setImportStatus(`Matching ${jsResult.items.length} songs to audio streams...`);
-          const jsLoaded = await convertJioSaavnTracksToPlayerTracks(jsResult, selectedPlaylist.title, (done, total) => {
-            setImportStatus(`Matching audio streams: ${done}/${total}...`);
-          });
-          const updatedJs = playlists.map((p) => {
-            if (p.id === selectedPlaylist.id) {
-              const existingIds = new Set(p.tracks.map((t) => t.videoId));
-              const newTracks = jsLoaded.filter((t) => !existingIds.has(t.videoId));
-              return {
-                ...p,
-                tracks: [...p.tracks, ...newTracks],
-                cover: p.cover || jsResult.cover || newTracks[0]?.thumb || p.tracks[0]?.thumb,
-                updatedAt: Date.now(),
-              };
-            }
-            return p;
-          });
-          updatePlaylists(updatedJs);
-          if (selectedPlaylist.isPublic) {
-            const pubTarget = updatedJs.find((p) => p.id === selectedPlaylist.id);
-            if (pubTarget) await publishPlaylist(pubTarget);
-          }
-          setImportInput("");
-          setShowImportModal(false);
-          onToast(`Imported ${jsLoaded.length} JioSaavn track${jsLoaded.length === 1 ? "" : "s"} to "${selectedPlaylist.title}"`);
-          return;
-        }
-      }
-
-      // Check SoundCloud track URL (single-track import only; sets/playlists need SoundCloud's API key)
-      if (isSoundCloudUrl(input)) {
-        setImportStatus("Fetching SoundCloud track...");
-        const scInfo = await loadSoundCloudTrack(input, (done, total) => {
-          setImportStatus(`Fetching SoundCloud track ${done}/${total}...`);
-        });
-        setImportStatus(`Matching "${scInfo.title.slice(0, 24)}" to audio stream...`);
-        const scTrack = await convertSoundCloudTrackToPlayerTrack(scInfo, selectedPlaylist.title);
-        const updatedSc = playlists.map((p) => {
-          if (p.id === selectedPlaylist.id) {
-            const existingIds = new Set(p.tracks.map((t) => t.videoId));
-            if (existingIds.has(scTrack.videoId)) return p;
-            return {
-              ...p,
-              tracks: [...p.tracks, scTrack],
-              cover: p.cover || scTrack.thumb || p.tracks[0]?.thumb,
-              updatedAt: Date.now(),
-            };
-          }
-          return p;
-        });
-        updatePlaylists(updatedSc);
-        if (selectedPlaylist.isPublic) {
-          const pubTarget = updatedSc.find((p) => p.id === selectedPlaylist.id);
-          if (pubTarget) await publishPlaylist(pubTarget);
         }
         setImportInput("");
         setShowImportModal(false);
-        onToast(`Imported "${scTrack.title}" from SoundCloud to "${selectedPlaylist.title}"`);
+        onToast(
+          `Imported ${newTracks.length} ${result.name} track${newTracks.length === 1 ? "" : "s"} to "${selectedPlaylist.title}" — ${importSummary(result.tracks)}`
+        );
         return;
       }
 
@@ -477,8 +446,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
         if (loaded && loaded.length > 0) {
           const updated = playlists.map((p) => {
             if (p.id === selectedPlaylist.id) {
-              const existingIds = new Set(p.tracks.map((t) => t.videoId));
-              const newTracks = loaded.filter((t) => !existingIds.has(t.videoId));
+              const existingKeys = new Set(p.tracks.map(trackDedupKey));
+              const newTracks = loaded.filter((t) => !existingKeys.has(trackDedupKey(t)));
               return {
                 ...p,
                 tracks: [...p.tracks, ...newTracks],
@@ -519,11 +488,19 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
             thumb: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
             artwork: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
             sourceType: "youtube",
+            sourcePlatform: "youtube",
             sourceUrl: `https://www.youtube.com/watch?v=${vid}`,
+            sourceTrackId: vid,
             source: "custom",
+            playlistPosition: i + 1,
             bpm: 100,
             seed: i + 1,
             addedAt: Date.now(),
+            metadataConfidence: "EXACT",
+            playable: true,
+            playableSource: vid,
+            playableSourceType: "youtube",
+            resolverStatus: "EXACT",
           };
           results.push(trk);
         } else if (line.length > 2) {
@@ -541,11 +518,19 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
               thumb: `https://i.ytimg.com/vi/${matchedVid}/hqdefault.jpg`,
               artwork: `https://i.ytimg.com/vi/${matchedVid}/hqdefault.jpg`,
               sourceType: "youtube",
+              sourcePlatform: "youtube",
               sourceUrl: `https://www.youtube.com/watch?v=${matchedVid}`,
+              sourceTrackId: matchedVid,
               source: "custom",
+              playlistPosition: i + 1,
               bpm: 100,
               seed: i + 1,
               addedAt: Date.now(),
+              metadataConfidence: "EXACT",
+              playable: true,
+              playableSource: matchedVid,
+              playableSourceType: "youtube",
+              resolverStatus: "EXACT",
             });
           }
         }
@@ -554,8 +539,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       if (results.length > 0) {
         const updated = playlists.map((p) => {
           if (p.id === selectedPlaylist.id) {
-            const existingIds = new Set(p.tracks.map((t) => t.videoId));
-            const newTracks = results.filter((t) => !existingIds.has(t.videoId));
+            const existingKeys = new Set(p.tracks.map(trackDedupKey));
+            const newTracks = results.filter((t) => !existingKeys.has(trackDedupKey(t)));
             return {
               ...p,
               tracks: [...p.tracks, ...newTracks],
@@ -894,6 +879,26 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                 </div>
               </div>
 
+              {/* Phase 9 — import information strip */}
+              {importInfo && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10.5px] text-[var(--dim)]">
+                  <span>
+                    Total: <b className="text-white">{importInfo.total}</b>
+                  </span>
+                  <span>
+                    · Playable: <b className="text-emerald-400">{importInfo.playable}</b>
+                  </span>
+                  <span>
+                    · Unresolved: <b className="text-amber-300">{importInfo.unresolved}</b>
+                  </span>
+                  {Object.entries(importInfo.bySrc).map(([src, n]) => (
+                    <span key={src} className="capitalize">
+                      · {src}: <b className="text-white">{n}</b>
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {/* In-playlist search input */}
               {selectedPlaylist.tracks.length > 0 && (
                 <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
@@ -914,7 +919,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
               )}
 
               {/* Tracklist */}
-              <div className="max-h-[50vh] overflow-y-auto space-y-1.5 pr-1">
+              <div ref={containerRef} className="max-h-[50vh] overflow-y-auto space-y-1.5 pr-1">
                 {filteredTracks.length === 0 ? (
                   <div className="py-12 text-center text-xs text-[var(--dim)]">
                     {selectedPlaylist.tracks.length === 0
@@ -924,7 +929,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                       : "No tracks match your search filter."}
                   </div>
                 ) : (
-                  filteredTracks.map((t, idx) => (
+                  visible.map((t, idx) => (
                     <div
                       key={`${t.id || t.videoId}-${idx}`}
                       className="group flex items-center justify-between rounded-xl p-2 hover:bg-white/[0.05] transition-colors"
@@ -936,11 +941,19 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                         <img
                           src={t.thumb || t.coverUrl || "/cover-placeholder.jpg"}
                           alt=""
+                          loading="lazy"
                           className="h-9 w-9 rounded-lg object-cover object-center bg-black/40 border border-white/5 shrink-0"
                           onError={(e) => { (e.target as HTMLImageElement).src = "/cover-placeholder.jpg"; }}
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-semibold text-white">{t.title}</div>
+                          <div className="truncate text-xs font-semibold text-white flex items-center gap-1.5">
+                            <span className="truncate">{t.title}</span>
+                            {(!t.playable || t.resolverStatus === "UNRESOLVED") && (
+                              <span className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-1.5 py-px text-[9px] font-normal text-amber-300">
+                                Unresolved
+                              </span>
+                            )}
+                          </div>
                           <div className="truncate text-[10px] text-[var(--dim)]">{t.artist}</div>
                         </div>
                       </div>
@@ -952,7 +965,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               // Always close any existing popup first, then toggle
-                              if (addToPlaylistTrack?.videoId === t.videoId) {
+                              if (addToPlaylistTrack?.id === t.id) {
                                 setAddToPlaylistTrack(null);
                               } else {
                                 setAddToPlaylistTrack(t);
@@ -963,7 +976,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                           >
                             <PlusIcon size={14} />
                           </button>
-                          {addToPlaylistTrack?.videoId === t.videoId && (
+                          {addToPlaylistTrack?.id === t.id && (
                             <div
                               data-add-to-playlist-popup
                               className="absolute right-0 top-full z-50 mt-1 w-52 rounded-xl border border-white/15 bg-[#0e1626] p-2 shadow-2xl"
@@ -978,7 +991,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                 </div>
                               ) : (
                                 playlists.map((pl) => {
-                                  const alreadyIn = pl.tracks.some((trk) => trk.videoId === t.videoId);
+                                  const alreadyIn = pl.tracks.some((trk) => trackDedupKey(trk) === trackDedupKey(t));
                                   return (
                                     <button
                                       key={pl.id}
@@ -1018,12 +1031,42 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                           <PlusIcon size={14} />
                         </button>
                         <button
-                          onClick={() => onPlayTrack(t)}
+                          onClick={() => {
+                            if (!t.playable || t.resolverStatus === "UNRESOLVED") {
+                              onToast(`"${t.title}" has no playable source yet`);
+                              return;
+                            }
+                            onPlayTrack(t);
+                          }}
                           className="flex items-center gap-1 rounded-lg bg-[var(--acc0)]/20 px-2.5 py-1 text-xs font-semibold text-[var(--acc0)] hover:bg-[var(--acc0)]/30"
                         >
                           <PlayIcon size={12} />
                           Play
                         </button>
+                        {selectedPlaylist.id !== "__liked_songs__" && !filterQuery.trim() && (
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => handleMoveTrack(selectedPlaylist.id, idx, idx - 1)}
+                              disabled={idx === 0}
+                              className="rounded-lg p-1 text-[var(--dim)] hover:bg-white/10 hover:text-white disabled:opacity-25"
+                              title="Move up"
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M18 15l-6-6-6 6" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleMoveTrack(selectedPlaylist.id, idx, idx + 1)}
+                              disabled={idx === filteredTracks.length - 1}
+                              className="rounded-lg p-1 text-[var(--dim)] hover:bg-white/10 hover:text-white disabled:opacity-25"
+                              title="Move down"
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M6 9l6 6 6-6" />
+                              </svg>
+                            </button>
+                          </div>
+                        )}
                         {selectedPlaylist.id !== "__liked_songs__" && (
                           <button
                             onClick={() => handleRemoveTrackFromPlaylist(selectedPlaylist.id, t.id)}
@@ -1037,6 +1080,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                     </div>
                   ))
                 )}
+                {hasMore && <div ref={sentinelRef} className="h-4" aria-hidden />}
               </div>
             </div>
           ) : (

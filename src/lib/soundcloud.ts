@@ -1,5 +1,5 @@
 import type { Track } from "./media";
-import { matchTrackToYouTube } from "./spotify";
+import { resolvePlayableSource } from "./resolver";
 
 export interface SoundCloudTrackInfo {
   title: string;
@@ -7,6 +7,7 @@ export interface SoundCloudTrackInfo {
   cover?: string;
   duration?: number;
   sourceUrl: string;
+  sourceTrackId?: string;
 }
 
 /** Detect soundcloud.com track/playlist/set URLs. */
@@ -87,35 +88,61 @@ export async function loadSoundCloudTrack(
   };
 }
 
-/** Resolves a SoundCloud track to a playable YouTube-backed Track. */
+/**
+ * Converts a SoundCloud track to a normalized CREESPY Track. If no legitimate
+ * playable source exists the track is kept with resolverStatus = "UNRESOLVED"
+ * and playable = false (never a fabricated/half-broken video id).
+ */
 export async function convertSoundCloudTrackToPlayerTrack(
   info: SoundCloudTrackInfo,
   playlistTitle: string
 ): Promise<Track> {
-  let videoId: string | null = null;
-  try {
-    videoId = await matchTrackToYouTube(info.title, info.artist);
-  } catch {
-    /* fallback */
-  }
-  const vid = videoId || `sc_${encodeURIComponent(info.title).slice(0, 7)}_${Date.now().toString(36)}`;
+  const title = String(info.title || "Untitled SoundCloud Track").trim();
+  const artist = String(info.artist || "Unknown Artist").trim();
+  const artists = artist
+    .split(/[,;&]/)
+    .map((a) => a.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+
+  const resolved = await resolvePlayableSource({
+    title,
+    artist,
+    artists,
+    album: playlistTitle,
+    duration: info.duration,
+    sourceTrackId: info.sourceTrackId,
+  });
+
+  const videoId = resolved.videoId || "";
+  const art = videoId
+    ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+    : info.cover;
 
   return {
-    id: `sc-${Date.now()}`,
-    videoId: vid,
-    title: info.title,
-    artist: info.artist,
+    id: `sc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    videoId,
+    title,
+    artist,
+    artists,
     album: playlistTitle,
-    duration: info.duration || 180,
-    thumb: info.cover || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
-    artwork: info.cover,
-    coverUrl: info.cover,
+    duration: info.duration,
+    thumb: art,
+    artwork: art,
+    coverUrl: art,
     sourceType: "soundcloud",
+    sourcePlatform: "soundcloud",
     sourceUrl: info.sourceUrl,
+    sourceTrackId: info.sourceTrackId,
     source: "custom",
     tag: "SoundCloud",
-    bpm: 100,
+    playlistPosition: 1,
     seed: 1,
     addedAt: Date.now(),
+    metadataConfidence: resolved.metadataConfidence,
+    playable: Boolean(videoId),
+    playableSource: videoId || undefined,
+    playableSourceType: resolved.playableSourceType,
+    resolverStatus: resolved.status,
   };
 }

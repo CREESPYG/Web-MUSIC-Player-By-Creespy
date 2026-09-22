@@ -234,7 +234,7 @@ export function DiscStage({
           <div className="absolute inset-0 rounded-full overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.img
-                key={track.videoId}
+                key={track.id}
                 src={highResThumb}
                 onError={(e) => {
                   const currentSrc = e.currentTarget.src;
@@ -293,7 +293,7 @@ export function DiscStage({
         <div className="min-w-0 text-left flex-1">
           <AnimatePresence mode="wait">
             <motion.div
-              key={track.videoId}
+              key={track.id}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}

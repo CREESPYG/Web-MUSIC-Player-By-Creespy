@@ -1,6 +1,7 @@
 import type { Track } from "./media";
-import { loadYouTubeAPI } from "./youtube";
-import { fetchTrackMeta, tokens, searchYouTube } from "./media";
+import { resolvePlayableSource, matchTrackToYouTube } from "./resolver";
+
+export { matchTrackToYouTube };
 
 export interface SpotifyTrackInfo {
   title: string;
@@ -201,260 +202,28 @@ export async function loadSpotifyData(
   };
 }
 
-/**
- * Strict title/artist similarity check for a YouTube candidate against the
- * song we want. Returns true only when the candidate is clearly the SAME song
- * (strong title token overlap + at least one artist token appearing in the
- * candidate title or uploader). Non-matches are rejected so we never import a
- * random/wrong video.
- */
-function isGoodMatch(
-  queryTitle: string,
-  queryArtist: string,
-  candTitle: string,
-  candArtist: string,
-  candDuration?: number,
-  queryDuration?: number
-): boolean {
-  const qT = tokens(queryTitle);
-  if (!qT.length) return false;
+/** Splits a "ArtistA x ArtistB, ArtistC, ..." string into explicit artists[]. */
+function splitArtists(artist: string): string[] {
+  return artist
+    .split(/[,;&/]/)
+    .map((a) => a.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
 
-  const candTokens = new Set(tokens(`${candTitle} ${candArtist}`));
-  let hit = 0;
-  for (const t of qT) if (candTokens.has(t)) hit++;
-  const cover = hit / qT.length;
-  if (cover < 0.6) return false;
-
-  // Reject wildly wrong lengths (live versions / full albums) when title isn't a full match
-  if (cover < 1 && typeof queryDuration === "number" && typeof candDuration === "number") {
-    if (candDuration > queryDuration * 3 || candDuration < queryDuration * 0.33) return false;
-  }
-
-  const text = `${candTitle} ${candArtist}`.toLowerCase();
-  const artistTokens = tokens(queryArtist).slice(0, 3);
-  const artistHit = artistTokens.length === 0 || artistTokens.some((t) => text.includes(t));
-  return artistHit;
+/** Derives the Spotify track ID from a spotify:track:URI or null. */
+function spotifyTrackId(uri?: string): string | undefined {
+  const m = String(uri || "").match(/^spotify:track:([a-zA-Z0-9]+)/);
+  return m ? m[1] : undefined;
 }
 
 /**
- * Searches YouTube for a matching track (Title + Artist) and verifies the
- * result is the SAME song before returning it.
- * STRATEGY 1 (primary): hidden-player search, verified through oEmbed metadata.
- * STRATEGY 2 (backup): keyless Piped/Invidious REST search with candidate scoring.
- * Returns null when no verified match exists — the caller then SKIPS that song
- * instead of importing an unplayable placeholder (per user requirement).
- *
- * Ordering rationale: the keyless REST endpoints are public and frequently go
- * down (403/404/502/HTML-not-JSON in live probes), while the hidden-iframe
- * player search tunnels through the user's own YouTube session (CORS-free and
- * reliable in any browser), so it must run FIRST.
+ * Loads Spotify playlist/album/track metadata and converts EVERY source track
+ * into a normalized CREESPY Track — resolving a playable YouTube source where
+ * possible. Tracks that cannot be resolved on YouTube are KEPT in the playlist
+ * with resolverStatus = "UNRESOLVED" and playable = false (the original
+ * playlist identity of every track is preserved).
  */
-export async function matchTrackToYouTube(
-  title: string,
-  artist: string,
-  duration?: number
-): Promise<string | null> {
-  const query = `${artist} - ${title}`.trim();
-
-  // Strategy 1 (PRIMARY): hidden-player search, verified via oEmbed metadata.
-  // This runs inside the browser's own YouTube context — no REST endpoint, no
-  // CORS, no public-instance availability — so it works even when every Piped
-  // / Invidious mirror is down. The candidate must still prove to be the SAME
-  // song (title tokens + artist token + duration window) before we accept it.
-  try {
-    const vid = await searchViaHiddenPlayer(`${query} audio`);
-    if (vid && vid.length === 11) {
-      const meta = await fetchTrackMeta(vid);
-      if (isGoodMatch(title, artist, meta.title, meta.artist, meta.duration, duration)) {
-        return vid;
-      }
-    }
-  } catch {
-    /* fallback */
-  }
-
-  // Strategy 2 (backup): REST search with per-candidate verification.
-  try {
-    const results = await searchYouTube(query, 10);
-    for (const r of results) {
-      if (
-        isGoodMatch(title, artist, r.title, r.artist, r.duration, duration) &&
-        r.videoId &&
-        r.videoId.length === 11
-      ) {
-        return r.videoId;
-      }
-    }
-  } catch {
-    /* fallback */
-  }
-
-  return null;
-}
-
-/**
- * Executes a client-side search via YouTube IFrame API's cuePlaylist { listType: 'search' }.
- */
-function searchViaHiddenPlayer(query: string): Promise<string | null> {
-  return new Promise(async (resolve) => {
-    try {
-      const YT = await loadYouTubeAPI();
-      const host = document.createElement("div");
-      host.style.cssText = "position:fixed;left:-9999px;top:0;width:10px;height:10px;opacity:0.001;pointer-events:none;";
-      document.body.appendChild(host);
-
-      let resolved = false;
-      const cleanup = (player?: any) => {
-        try {
-          player?.destroy?.();
-        } catch {
-          /* noop */
-        }
-        host.remove();
-      };
-
-      const timer = window.setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          cleanup(p);
-          resolve(null);
-        }
-      }, 7000);
-
-      let p: any = null;
-      p = new YT.Player(host, {
-        width: "10",
-        height: "10",
-        playerVars: { autoplay: 0, controls: 0, disablekb: 1 },
-        events: {
-          onReady: (e: any) => {
-            try {
-              e.target.cuePlaylist({
-                listType: "search",
-                list: query,
-                index: 0,
-              });
-            } catch {
-              if (!resolved) {
-                resolved = true;
-                window.clearTimeout(timer);
-                cleanup(p);
-                resolve(null);
-              }
-            }
-          },
-          onStateChange: (e: any) => {
-            // CUED is 5
-            if (e.data === 5 && !resolved) {
-              resolved = true;
-              window.clearTimeout(timer);
-              try {
-                const list = e.target.getPlaylist() || [];
-                cleanup(p);
-                resolve(list.length > 0 ? list[0] : null);
-              } catch {
-                cleanup(p);
-                resolve(null);
-              }
-            }
-          },
-          onError: () => {
-            if (!resolved) {
-              resolved = true;
-              window.clearTimeout(timer);
-              cleanup(p);
-              resolve(null);
-            }
-          },
-        },
-      });
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-/**
- * Module-level cache: normalized "title|artist" → verified YouTube videoId
- * (or null sentinel when that exact song proved UNMATCHABLE on YouTube).
- *
- * WHY IT SPEEDS UP IMPORTS WITHOUT CHANGING CORRECTNESS:
- *  • Re-importing the SAME playlist again → every track is a cache hit,
- *    zero network. (Importing a playlist twice is the most common repeat.)
- *  • Repeated titles WITHIN one playlist (a song appearing twice) resolve
- *    the 2nd occurrence from cache, not a fresh search.
- *  • Common songs shared across two different playlists resolve instantly.
- * The hit path is a single Map.get — no YouTube REST round-trip at all.
- */
-const spotifyMatchCache = new Map<string, string>();
-
-function cachedMatchKey(title: string, artist: string): string {
-  return `${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
-}
-
-function cachedMatchGet(title: string, artist: string): { hit: boolean; videoId: string | null } {
-  const v = spotifyMatchCache.get(cachedMatchKey(title, artist));
-  if (v === undefined) return { hit: false, videoId: null };
-  return { hit: true, videoId: v === "!!!missing!!!" ? null : v };
-}
-
-function cachedMatchSet(title: string, artist: string, videoId: string | null): void {
-  spotifyMatchCache.set(cachedMatchKey(title, artist), videoId ? videoId : "!!!missing!!!");
-}
-
-/**
- * Converts SpotifyTrackInfo items to playable Track objects.
- * Immediately resolves the first few tracks to YouTube video IDs,
- * while leaving remaining tracks ready with their metadata and cover art.
- */
-const MAX_CONCURRENT_MATCHES = 6;
-
-async function resolveOneSpotifyTrack(
-  s: SpotifyTrackInfo,
-  playlistTitle: string,
-  i: number,
-  slots: (Track | null)[]
-): Promise<void> {
-  const c = cachedMatchGet(s.title, s.artist);
-  let videoId: string | null = null;
-  if (c.hit) {
-    videoId = c.videoId;
-  } else {
-    try {
-      videoId = await matchTrackToYouTube(s.title, s.artist);
-    } catch {
-      /* skip on network error */
-    }
-    cachedMatchSet(s.title, s.artist, videoId);
-  }
-  if (!videoId) return;
-
-  // Per-song cover art comes from the matched video's own thumbnail,
-  // NOT the playlist cover applied to every song.
-  const art = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-  const trk: Track = {
-    id: `sp-${Date.now()}-${i}`,
-    videoId,
-    title: s.title,
-    artist: s.artist,
-    album: playlistTitle,
-    duration: s.duration || 180,
-    thumb: art,
-    artwork: art,
-    coverUrl: art,
-    sourceType: "spotify",
-    sourceUrl: s.spotifyUri || `https://open.spotify.com/search/${encodeURIComponent(`${s.artist} ${s.title}`)}`,
-    source: "custom",
-    tag: `Spotify · ${playlistTitle.slice(0, 18)}`,
-    bpm: 100,
-    seed: i + 1,
-    addedAt: Date.now(),
-  };
-
-  slots[i] = trk;
-}
-
 export async function convertSpotifyTracksToPlayerTracks(
   spotifyTracks: SpotifyTrackInfo[],
   playlistTitle: string,
@@ -468,10 +237,9 @@ export async function convertSpotifyTracksToPlayerTracks(
   }
   onResolveProgress?.(0, total);
 
-  // One slot per track index preserves the ORIGINAL playlist order even
-  // though parallel searches resolve out of order. Null = that track proved
-  // unmatchable on YouTube (strictly skipped, per requirement).
+  // One slot per index preserves ORIGINAL playlist order and keeps every track.
   const slots: (Track | null)[] = new Array<Track | null>(total).fill(null);
+  const batchStamp = Date.now().toString(36);
 
   let next = 0;
   let doneCount = 0;
@@ -480,15 +248,70 @@ export async function convertSpotifyTracksToPlayerTracks(
     while (next < total) {
       if (isCancelled?.()) return;
       const i = next++;
-      await resolveOneSpotifyTrack(spotifyTracks[i], playlistTitle, i, slots);
+      slots[i] = await buildSpotifyTrack(spotifyTracks[i], i, playlistTitle, batchStamp);
       doneCount++;
       onResolveProgress?.(doneCount, total);
     }
   }
 
-  const n = Math.min(MAX_CONCURRENT_MATCHES, total);
+  const n = Math.min(6, total);
   await Promise.all(Array.from({ length: n }, () => worker()));
 
   onResolveProgress?.(total, total);
   return slots.filter((t): t is Track => t !== null);
+}
+
+async function buildSpotifyTrack(
+  s: SpotifyTrackInfo,
+  i: number,
+  playlistTitle: string,
+  batchStamp: string
+): Promise<Track> {
+  const title = String(s.title || "Untitled Track").trim();
+  const artist = String(s.artist || "Unknown Artist").trim();
+  const sourceTrackId = spotifyTrackId(s.spotifyUri);
+  const spotifyUrl = s.spotifyUri
+    ? sourceTrackId
+      ? `https://open.spotify.com/track/${sourceTrackId}`
+      : `https://open.spotify.com/search/${encodeURIComponent(`${artist} ${title}`)}`
+    : undefined;
+
+  const resolved = await resolvePlayableSource({
+    title,
+    artist,
+    artists: splitArtists(artist),
+    album: playlistTitle,
+    duration: s.duration,
+    sourceTrackId,
+  });
+
+  const videoId = resolved.videoId || "";
+  const perSongArt = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : s.cover;
+
+  return {
+    id: `sp-${batchStamp}-${i}`,
+    videoId,
+    title,
+    artist,
+    artists: splitArtists(artist),
+    album: playlistTitle,
+    duration: s.duration,
+    thumb: perSongArt,
+    artwork: perSongArt,
+    coverUrl: perSongArt,
+    sourceType: "spotify",
+    sourcePlatform: "spotify",
+    sourceUrl: spotifyUrl || s.spotifyUri,
+    sourceTrackId,
+    source: "custom",
+    tag: `Spotify · ${playlistTitle.slice(0, 18)}`,
+    playlistPosition: i + 1,
+    seed: i + 1,
+    addedAt: Date.now(),
+    metadataConfidence: resolved.metadataConfidence,
+    playable: Boolean(videoId),
+    playableSource: videoId || undefined,
+    playableSourceType: resolved.playableSourceType,
+    resolverStatus: resolved.status,
+  };
 }

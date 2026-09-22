@@ -297,6 +297,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
           </div>
 
+          {/* Up Next Auto-Queue (Phase 10) */}
+          <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 p-3">
+            <div>
+              <div className="text-xs font-medium text-white">Up Next Auto-Queue</div>
+              <div className="text-[10px] text-[var(--dim)]">Suggest one song when the queue runs low</div>
+            </div>
+            <button
+              onClick={() => {
+                updatePreference("autoQueue", !prefs.autoQueue);
+                onToast(prefs.autoQueue ? "Up Next suggestions disabled" : "Up Next suggestions on");
+              }}
+              className={`h-5 w-9 rounded-full transition-colors relative ${
+                prefs.autoQueue ? "bg-[var(--acc0)]" : "bg-white/20"
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                  prefs.autoQueue ? "right-0.5" : "left-0.5"
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Skip Landing */}
           <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 p-3">
             <div>

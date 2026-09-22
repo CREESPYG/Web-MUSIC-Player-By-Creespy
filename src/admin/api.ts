@@ -87,4 +87,18 @@ export function logout(): Promise<{ ok: boolean }> {
   return req<{ ok: boolean }>("/auth/logout", { method: "POST", withCsrf: true });
 }
 
+export interface DashboardCards {
+  users: { distinct_owners: number; publishers: number; admins: number };
+  playlists: { count: number; total_tracks: number; total_plays: number };
+  playback: { source: string; total_plays: number };
+  rooms: { available: boolean; note?: string };
+  errors: { failed_events_24h: number; total_audit_failures: number };
+  sessions: { active: number; total: number };
+  storage: { total_tracks: number; approx_bytes: number };
+}
+
+export function fetchDashboard(): Promise<{ cards: DashboardCards }> {
+  return req<{ cards: DashboardCards }>("/dashboard");
+}
+
 export { AdminApiError };

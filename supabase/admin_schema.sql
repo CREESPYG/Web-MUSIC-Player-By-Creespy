@@ -113,3 +113,72 @@ alter table public.admin_audit    enable row level security;
 --     public.admin_sessions to admin_app;
 --   grant select on public.admin_audit to admin_app;
 --   grant usage, select on sequence public.admin_audit_audit_id_seq to admin_app;
+
+-- ---------------------------------------------------------------------------
+-- 5. DASHBOARD — server-side computed live cards (Phase C)
+--    Single SECURITY DEFINER query: all numbers are computed IN the database,
+--    so the serverless function never ships raw rows to the client.
+--    Caller = service_role (server-side) only; never granted to anon.
+-- ---------------------------------------------------------------------------
+create or replace function public.admin_dashboard_live()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_result jsonb;
+begin
+  select jsonb_build_object(
+    'users', jsonb_build_object(
+      'distinct_owners',
+        (select count(distinct owner_uid) from public.public_playlists),
+      'publishers',
+        (select count(distinct owner_uid) from public.public_playlists where track_count > 0),
+      'admins',
+        (select count(*) from public.admin_users)
+    ),
+    'playlists', jsonb_build_object(
+      'count',
+        (select count(*) from public.public_playlists),
+      'total_tracks',
+        (select coalesce(sum(track_count), 0) from public.public_playlists),
+      'total_plays',
+        (select coalesce(sum(play_count), 0) from public.public_playlists)
+    ),
+    'playback', jsonb_build_object(
+      'source', 'play_count_total',
+      'total_plays',
+        (select coalesce(sum(play_count), 0) from public.public_playlists)
+    ),
+    'rooms', jsonb_build_object(
+      'available', false,
+      'note', 'Rooms are realtime-only (no persisted table yet); lands in Phase G.'
+    ),
+    'errors', jsonb_build_object(
+      'failed_events_24h',
+        (select count(*) from public.admin_audit
+          where result = 'fail' and created_at > now() - interval '24 hours'),
+      'total_audit_failures',
+        (select count(*) from public.admin_audit where result = 'fail')
+    ),
+    'sessions', jsonb_build_object(
+      'active',
+        (select count(*) from public.admin_sessions
+          where revoked_at is null and expires_at > now()),
+      'total',
+        (select count(*) from public.admin_sessions)
+    ),
+    'storage', jsonb_build_object(
+      'total_tracks',
+        (select coalesce(sum(track_count), 0) from public.public_playlists),
+      'approx_bytes',
+        (select coalesce(sum(pg_column_size(tracks) + 512), 0) from public.public_playlists)
+    )
+  ) into v_result;
+  return v_result;
+end;
+$$;
+
+revoke all on function public.admin_dashboard_live() from public;
+grant execute on function public.admin_dashboard_live() to service_role;

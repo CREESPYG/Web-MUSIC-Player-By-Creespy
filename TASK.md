@@ -267,7 +267,8 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
 | ----- | ----- | ---------------- | ----------------- |
 | **A** | Secure Auth + Sessions (SERVER-SIDE) | ✅ DONE (committed `03a4646`, 31 admin tests) | ⬜ ops (schema+env+deploy) |
 | **B** | Roles & Server-Side Authorization | ✅ DONE (19 rbac tests, audit endpoint, suicide-guard) | — |
-| **C** | Dashboard Foundation | ▶ NEXT | — |
+| **C** | Dashboard Foundation | ✅ DONE (RPC live cards, role-scoped, stale-refresh) | — |
+| **D** | Users, Sessions & Presence | ▶ NEXT | — |
 | **D** | Users, Sessions & Presence | ⬜ | — |
 | **E** | Songs & Listening Analytics | ⬜ | — |
 | **F** | Playlist Management | ⬜ | — |
@@ -340,12 +341,23 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
       boundaries, suicide-guard) + router integration (me grants, audit 200/
       403/denied-audited). Admin suite 31→50; TOTAL 67→86, all PASS.
 
-### ADMIN Phase C — Dashboard Foundation  [NEXT]
-- [ ] Elysium/landing: live cards (users, rooms, playback, errors, storage) —
-      computed server-side, no secrets.
-- [ ] Dashboard route guard (role-scoped), stale-token refresh, logout-anywhere.
+### ADMIN Phase C — Dashboard Foundation  ✅ (code-side)
+- [x] Server-side live cards via single SECURITY DEFINER RPC `admin_dashboard_live()`
+      (supabase/admin_schema.sql §5): users (distinct owners/publishers/admins),
+      playlists (count/tracks/plays), playback (play_count source), rooms
+      (honest realtime-only placeholder), errors (failed audit 24h/total),
+      active admin sessions, storage (tracks + approx bytes from pg_column_size).
+      Computed IN the DB — no raw rows or secrets ever reach the client.
+- [x] `GET /api/admin/dashboard` gated by `dashboard.read`
+      (SUPER_ADMIN + ADMIN + ANALYST; MODERATOR generic 403, audited) + audit log.
+- [x] Dashboard SPA: live card grid (role-scoped route guard), last-refresh stamp,
+      stale-token refresh poll (60s re-validates session + reloads cards),
+      logout-anywhere / session-expiry handling (auto sign-out on 401/403).
+- [x] Tests: FakeDb.dashboardLive + router integration (SUPER_ADMIN/ANALYST ok,
+      MODERATOR 403 + authz.denied.dashboard.read audit). Admin suite 50→51;
+      TOTAL 86→87 all PASS. Gates lint + build green.
 
-### ADMIN Phase D — Users, Sessions & Presence
+### ADMIN Phase D — Users, Sessions & Presence  [NEXT]
 - [ ] List users (server query, admin_session joined, never user PII leaks),
       active/inactive, sessions list per user, force-logout user (destructive,
       audited), per-user session revocation.
@@ -412,4 +424,4 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
 
 ---
 
-_Last updated: ADMIN Phase B complete (code-side — RBAC matrix, per-endpoint gates, audit endpoint, suicide-guard; gates green: lint + 86/86 tests + build). ADMIN Phase C = NEXT. Open user-ops: Phase 26 RLS SQL, Phase 30 Netlify env, Phase 28 device matrix, ADMIN Phase A deploy (schema + env + first login). Player phases 0–31 code-side complete._
+_Last updated: ADMIN Phase C complete (code-side — server-computed live cards RPC, role-scoped dashboard, stale-token refresh; gates green: lint + 87/87 tests + build). ADMIN Phase D = NEXT. Open user-ops: Phase 26 RLS SQL, Phase 30 Netlify env, Phase 28 device matrix, ADMIN deploy (schema §1–5 + env + first login). Player phases 0–31 code-side complete._

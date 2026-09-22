@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { AdminApiError, changePassword, fetchSession, health, login, logout, type SessionInfo } from "./api";
+import {
+  AdminApiError,
+  changePassword,
+  fetchDashboard,
+  fetchSession,
+  health,
+  login,
+  logout,
+  type DashboardCards,
+  type SessionInfo,
+} from "./api";
 
 type Stage = "boot" | "login" | "change-password" | "dashboard" | "locked";
 
@@ -48,6 +58,13 @@ export default function AdminApp() {
     }
   }, []);
 
+  // Session expired server-side (stale token / forced revocation anywhere).
+  const onSessionExpired = useCallback(() => {
+    setSession(null);
+    setStage("login");
+    setFlash({ kind: "error", text: "Session expired. Sign in again." });
+  }, []);
+
   return (
     <div className="admin-root">
       <header className="admin-header">
@@ -79,7 +96,7 @@ export default function AdminApp() {
             }}
           />
         )}
-        {stage === "dashboard" && session && <DashboardShell session={session} />}
+        {stage === "dashboard" && session && <DashboardShell session={session} onSessionExpired={onSessionExpired} />}
       </main>
     </div>
   );
@@ -216,7 +233,51 @@ function ChangePasswordScreen({
 
 // ---------------------------------------------------------------------------
 
-function DashboardShell({ session }: { session: SessionInfo }) {
+function DashboardShell({ session, onSessionExpired }: { session: SessionInfo; onSessionExpired: () => void }) {
+  const [cards, setCards] = useState<DashboardCards | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastPoll, setLastPoll] = useState<number>(0);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(
+    (silent = false) => {
+      setBusy((b) => b || true);
+      fetchDashboard()
+        .then((r) => {
+          setCards(r.cards);
+          setError(null);
+          setLastPoll(Date.now());
+        })
+        .catch((err) => {
+          if (err instanceof AdminApiError && (err.status === 401 || err.status === 403)) {
+            onSessionExpired();
+            return;
+          }
+          if (!silent) setError(err instanceof Error ? err.message : "Dashboard load failed.");
+        })
+        .finally(() => setBusy(false));
+    },
+    [onSessionExpired],
+  );
+
+  useEffect(() => {
+    load(false);
+  }, [load]);
+
+  // Stale-token refresh: re-validate the session every 60s and refresh cards.
+  useEffect(() => {
+    const every30s = window.setInterval(() => {
+      fetchSession()
+        .then(() => {
+          void load(true);
+        })
+        .catch((err) => {
+          if (err instanceof AdminApiError && (err.status === 401 || err.status === 403)) onSessionExpired();
+        });
+    }, 60_000);
+    return () => window.clearInterval(every30s);
+  }, [load, onSessionExpired]);
+
   return (
     <div className="admin-dashboard">
       <section className="admin-card">
@@ -230,16 +291,50 @@ function DashboardShell({ session }: { session: SessionInfo }) {
           <dd>{session.role}</dd>
           <dt>Expires</dt>
           <dd>{new Date(session.expires_at).toLocaleString()}</dd>
+          {busy && (
+            <>
+              <dt>Refreshing</dt>
+              <dd>…</dd>
+            </>
+          )}
         </dl>
       </section>
+
       <section className="admin-card">
-        <h2>Control plane</h2>
-        <p className="admin-muted">
-          Auth layer (Phase A) is live. Management views land in the following
-          phases: users/sessions, songs, playlists, rooms, chat moderation,
-          traffic analytics, imports, system health.
-        </p>
+        <h2>Live dashboard</h2>
+        {error && <p className="admin-error">{error}</p>}
+        {!cards && !error && <p className="admin-muted">Loading live cards…</p>}
+        {cards && (
+          <>
+            <div className="admin-cards">
+              <Card label="Users (owners)" value={cards.users.distinct_owners} hint={`${cards.users.publishers} publishers · ${cards.users.admins} admins`} />
+              <Card label="Public playlists" value={cards.playlists.count} hint={`${cards.playlists.total_tracks} tracks`} />
+              <Card label="Plays" value={cards.playback.total_plays} hint={cards.playback.source} />
+              <Card label="Rooms" value={cards.rooms.available ? undefined : "—"} hint={cards.rooms.available ? "live" : cards.rooms.note ?? "realtime-only (Phase G)"} />
+              <Card label="Sessions" value={cards.sessions.active} hint={`${cards.sessions.total} total`} />
+              <Card label="Failed events 24h" value={cards.errors.failed_events_24h} hint={`${cards.errors.total_audit_failures} total failures`} />
+              <Card label="Storage" value={formatBytes(cards.storage.approx_bytes)} hint={`${cards.storage.total_tracks} tracks`} />
+            </div>
+            <p className="admin-muted admin-poll">Last refresh {lastPoll ? new Date(lastPoll).toLocaleTimeString() : "…"}</p>
+          </>
+        )}
       </section>
     </div>
   );
+}
+
+function Card({ label, value, hint }: { label: string; value?: number | string; hint?: string }) {
+  return (
+    <div className="admin-card admin-card--stat">
+      <div className="admin-stat-label">{label}</div>
+      <div className="admin-stat-value">{value ?? "—"}</div>
+      {hint && <div className="admin-stat-hint">{hint}</div>}
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
+  return `${bytes} B`;
 }

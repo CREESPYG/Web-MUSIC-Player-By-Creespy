@@ -118,6 +118,11 @@ const csrf = csrfTokenFor();
       return auditList(req, deps, cookies);
     }
 
+    if (path === "/api/admin/dashboard" || path === "/api/admin/dashboard/") {
+      if (method !== "GET") return json(405, { error: "Method not allowed." });
+      return dashboard(req, deps, cookies);
+    }
+
     return json(404, { error: "Not found." });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -377,6 +382,19 @@ async function auditList(req: RouteRequest, deps: RouterDeps, cookies: Map<strin
   const entries = await deps.db.listAudit(50);
   await audit(deps, { admin_id: ctx.admin.admin_id, role: ctx.admin.role, action: "audit.read", result: "ok", target_type: "audit", target_id: null }, req);
   return json(200, { entries });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard (Phase C: server-computed live cards, no raw rows or secrets)
+// ---------------------------------------------------------------------------
+
+async function dashboard(req: RouteRequest, deps: RouterDeps, cookies: Map<string, string>): Promise<RouteResult> {
+  const got = await requirePermission(req, deps, cookies, "dashboard.read", { csrfRequired: false });
+  const ctx = unwrap(got);
+  if (!ctx) return got as RouteResult;
+  const cards = await deps.db.dashboardLive();
+  await audit(deps, { admin_id: ctx.admin.admin_id, role: ctx.admin.role, action: "dashboard.read", result: "ok", target_type: "dashboard", target_id: null }, req);
+  return json(200, { cards });
 }
 
 // ---------------------------------------------------------------------------

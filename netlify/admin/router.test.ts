@@ -133,6 +133,17 @@ class FakeDb implements AdminDb {
   async listAudit(limit: number): Promise<any[]> {
     return [...this.audit].reverse().slice(0, limit);
   }
+  async dashboardLive(): Promise<Record<string, unknown>> {
+    return {
+      users: { distinct_owners: 3, publishers: 2, admins: this.admins.size },
+      playlists: { count: 4, total_tracks: 120, total_plays: 987 },
+      playback: { source: "play_count_total", total_plays: 987 },
+      rooms: { available: false, note: "realtime-only" },
+      errors: { failed_events_24h: 2, total_audit_failures: 5 },
+      sessions: { active: 1, total: this.sessions.size },
+      storage: { total_tracks: 120, approx_bytes: 12000 },
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +431,33 @@ describe("admin rbac — roles & server-side authorization (Phase B)", () => {
     expect((denied.body as { error: string }).error).toBe("You do not have permission to do that.");
     // The denied attempt itself is audited (authz-fed trail, no secret).
     expect(db.audit.some((a) => a.action === "authz.denied.audit.read" && a.result === "fail")).toBe(true);
+  });
+
+  it("dashboard endpoint is role-scoped: SUPER_ADMIN + ANALYST ok, MODERATOR 403 (Phase C)", async () => {
+    const db = new FakeDb({ adminId: "Creespy@Player", password: "Creespy@Admin123" });
+
+    // SUPER_ADMIN can read live cards.
+    const s = await loginAndCapture(db, "Creespy@Player", "Creespy@Admin123");
+    const ok = await handleRequest(makeReq("GET", "/api/admin/dashboard", authorizedHeader(s.raw, s.csrf)), { db });
+    expect(ok.status).toBe(200);
+    const body = ok.body as { cards: Record<string, unknown> };
+    expect(body.cards.users).toBeDefined();
+    expect(body.cards.playlists).toBeDefined();
+    expect(body.cards.rooms).toBeDefined();
+
+    // ANALYST (read-only analytics) can also read the dashboard.
+    await db.createAdmin({ admin_id: "analyst@creespy", display_name: "Analyst", role: "ANALYST", password_hash: await hashPassword("Analyst!Pass9") });
+    const a = await loginAndCapture(db, "analyst@creespy", "Analyst!Pass9");
+    const analRes = await handleRequest(makeReq("GET", "/api/admin/dashboard", authorizedHeader(a.raw, a.csrf)), { db });
+    expect(analRes.status).toBe(200);
+
+    // MODERATOR has no dashboard.read -> generic 403, audited.
+    await db.createAdmin({ admin_id: "mod3@creespy", display_name: "Mod3", role: "MODERATOR", password_hash: await hashPassword("Moderator!Pass9") });
+    const m = await loginAndCapture(db, "mod3@creespy", "Moderator!Pass9");
+    const denied = await handleRequest(makeReq("GET", "/api/admin/dashboard", authorizedHeader(m.raw, m.csrf)), { db });
+    expect(denied.status).toBe(403);
+    expect(db.audit.some((x) => x.action === "authz.denied.dashboard.read" && x.result === "fail")).toBe(true);
+    expect(db.audit.some((x) => x.action === "dashboard.read" && x.result === "ok")).toBe(true);
   });
 });
 

@@ -59,6 +59,7 @@ export interface AdminDb {
   countAdmins(): Promise<number>;
   appendAudit(entry: AuditEntry): Promise<void>;
   listAudit(limit: number): Promise<AuditEntry[]>;
+  dashboardLive(): Promise<Record<string, unknown>>;
 }
 
 /** Parse "expires_at"/"locked_until" to epoch ms safely. */
@@ -190,5 +191,12 @@ export class SupabaseAdminDb implements AdminDb {
       .limit(limit);
     if (error) throw new Error(supabaseError("listAudit", error));
     return (data ?? []) as unknown as AuditEntry[];
+  }
+
+  /** Server-side computed live dashboard numbers (single RPC, no raw rows to client). */
+  async dashboardLive(): Promise<Record<string, unknown>> {
+    const { data, error } = await this.client.rpc("admin_dashboard_live");
+    if (error) throw new Error(supabaseError("dashboardLive", error));
+    return (data ?? {}) as Record<string, unknown>;
   }
 }

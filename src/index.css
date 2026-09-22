@@ -431,6 +431,45 @@ input[type="range"].vol::-moz-range-thumb {
   color: #e8eefb;
 }
 
+.admin-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.admin-card--stat {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9fb0c8;
+}
+
+.admin-stat-value {
+  font-family: var(--font-tmono);
+  font-size: 26px;
+  line-height: 1.1;
+  color: var(--accent, #7dd3fc);
+}
+
+.admin-stat-hint {
+  font-size: 11px;
+  color: #8a9bb6;
+  overflow-wrap: anywhere;
+}
+
+.admin-poll {
+  margin-top: 12px;
+  text-align: right;
+}
+
 @media (max-width: 640px) {
   .admin-card {
     padding: 22px;

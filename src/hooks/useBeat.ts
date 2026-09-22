@@ -4,6 +4,14 @@ import { useEffect } from "react";
  * High-Precision Musical Audio Beat & Rhythm Engine.
  * Synchronizes visual effects tightly with real track playback time, tempo (BPM),
  * and 4/4 measure structure (downbeat kick on 1, backbeat snare on 2 & 4, 16th sub-pulses).
+ *
+ * Sync calibration: because the audio stream lives inside a cross-origin YouTube
+ * iframe, true beat extraction is impossible — instead the user can lock the
+ * visual grid to a song with two knobs:
+ *   · tempo (%) — multiply the musical tempo so pulses fire at the song's real rate
+ *   · phase (ms) — shift where beat 1 sits so kick/snare land on real downbeats
+ * The clock is also drift-corrected: the 500ms UI position poll is absorbed
+ * smoothly instead of hard re-anchoring every frame (which caused visible jitter).
  */
 class BeatEngine {
   playing = false;
@@ -13,6 +21,10 @@ class BeatEngine {
   lastSyncMs = performance.now();
   env = 0;
   lastReadTime = 0;
+
+  // User sync calibration
+  tempoMult = 1; // 0.7 .. 1.3
+  phaseSec = 0; // -0.25 .. +0.25 seconds of musical time shift
 
   // Real-time audio beat telemetry
   level = 0;
@@ -25,22 +37,57 @@ class BeatEngine {
   measureBeat = 0;
   bars = new Float32Array(48);
 
-  sync(trackTimeSec: number, isPlaying: boolean, bpm: number, seed: number) {
-    this.trackTime = Math.max(0, trackTimeSec || 0);
-    this.lastSyncMs = performance.now();
+  sync(
+    trackTimeSec: number,
+    isPlaying: boolean,
+    bpm: number,
+    seed: number,
+    tempo = 1,
+    phaseMs = 0
+  ) {
+    const now = performance.now();
     this.playing = isPlaying;
+
+    if (isPlaying && this.playing === this.lastPlayingWasPlaying) {
+      // Drift-corrected re-anchor: extrapolate where our clock HAS ALREADY estimated
+      // the playback to be, then compare against the polled value.
+      const extrap = Math.max(0, this.trackTime + (now - this.lastSyncMs) / 1000);
+      const drift = Math.abs(trackTimeSec - extrap);
+      if (drift > 0.35) {
+        // Real seek / position jump — hard re-anchor keeps bars on the new spot.
+        this.trackTime = Math.max(0, trackTimeSec || 0);
+      } else {
+        // Poll jitter (≤ ~250ms). Absorb it smoothly: keep our continuous clock,
+        // nudge it a fraction of the residual so long-term drift never accumulates.
+        this.trackTime = extrap + (trackTimeSec - extrap) * 0.18 * Math.min(1, drift / 0.35);
+      }
+    } else {
+      // State change (play/pause/track swap) — anchor cleanly to reported position.
+      this.trackTime = Math.max(0, trackTimeSec || 0);
+    }
+
+    this.lastPlayingWasPlaying = isPlaying;
+    this.lastSyncMs = now;
     this.bpm = bpm > 40 && bpm < 240 ? bpm : 96;
     this.seed = seed || 1;
+    this.tempoMult = Math.min(1.3, Math.max(0.7, tempo || 1));
+    this.phaseSec = Math.min(0.25, Math.max(-0.25, phaseMs || 0) / 1000);
   }
+
+  private lastPlayingWasPlaying = false;
 
   setPlaying(p: boolean) {
     this.playing = p;
+    this.lastPlayingWasPlaying = false;
     this.lastSyncMs = performance.now();
   }
 
-  setTrack(bpm: number, seed: number) {
+  setTrack(bpm: number, seed: number, tempo = this.tempoMult, phaseMs = this.phaseSec * 1000) {
     this.bpm = bpm > 40 && bpm < 240 ? bpm : 96;
     this.seed = seed || 1;
+    this.tempoMult = Math.min(1.3, Math.max(0.7, tempo || 1));
+    this.phaseSec = Math.min(0.25, Math.max(-0.25, phaseMs || 0) / 1000);
+    this.lastSyncMs = performance.now();
   }
 
   /** Frame deduplication timestamp */
@@ -69,33 +116,34 @@ class BeatEngine {
       currentSec = nowMs * 0.001;
     }
 
-    // Exact musical beat calculation
-    const beatsPerSec = this.bpm / 60;
-    const fractionalBeat = currentSec * beatsPerSec + (this.seed * 0.05);
+    // Apply user calibration to the musical time axis, then compute the beat grid
+    const musicSec = currentSec + this.phaseSec;
+    const beatsPerSec = (this.bpm / 60) * this.tempoMult;
+    const fractionalBeat = musicSec * beatsPerSec + (this.seed * 0.05);
     const beatIndex = Math.floor(fractionalBeat);
     const beatPhase = fractionalBeat - beatIndex; // 0.0 to 1.0 within beat
     this.beatPhase = beatPhase;
     this.measureBeat = Math.abs(beatIndex % 4); // 0 = Beat 1 (Kick), 1 = Beat 2, 2 = Beat 3, 3 = Beat 4
 
     // 1. Kick Attack & Decay Envelope (instant on beat 0.0, punchy decay)
-    const kickCurve = Math.max(0, 1 - beatPhase * 3.4);
+    const kickCurve = Math.max(0, 1 - beatPhase * 4.4);
     const kick = kickCurve * kickCurve * e;
 
     // 2. Downbeat Kick (Beat 1 of measure — heavy bass punch)
     const isDownbeat = this.measureBeat === 0;
-    const downbeatVal = isDownbeat ? kick * 1.55 : kick * 0.85;
+    const downbeatVal = isDownbeat ? kick * 1.6 : kick * 0.85;
     this.downbeat = downbeatVal;
 
     // 3. Snare / Clap Backbeat (Beats 2 & 4 — mid resonance)
     const isBackbeat = this.measureBeat === 1 || this.measureBeat === 3;
-    const snare = isBackbeat ? Math.pow(Math.max(0, 1 - beatPhase * 3.8), 2) * e : 0;
+    const snare = isBackbeat ? Math.pow(Math.max(0, 1 - beatPhase * 4.4), 2) * e : 0;
 
     // 4. 16th-note Shimmer & Subdivisions (high frequencies & particles)
     const sub16 = (fractionalBeat * 4) % 1;
     const hihat = Math.pow(Math.max(0, 1 - sub16 * 4.2), 2) * 0.4 * e;
 
     // Master pulse: instantaneous punch of kick or snare
-    this.pulse = Math.max(kick, snare * 0.75);
+    this.pulse = Math.max(kick, snare * 0.8);
 
     // Audio Frequency Bands:
     // Bass: sub-bass pulse + periodic low harmonic
@@ -128,7 +176,7 @@ class BeatEngine {
       // Smooth attack and realistic acoustic decay
       const prev = this.bars[i];
       const target = Math.min(1, Math.max(0.02, rawBar));
-      this.bars[i] = prev + (target - prev) * (target > prev ? 0.65 : 0.22);
+      this.bars[i] = prev + (target - prev) * (target > prev ? 0.7 : 0.22);
     }
 
     return this;
@@ -137,9 +185,9 @@ class BeatEngine {
 
 export const beat = new BeatEngine();
 
-/** Keeps the shared beat engine tightly synced with audio playback, position, and BPM */
-export function useBeatDriver(playing: boolean, bpm: number, seed: number, time = 0) {
+/** Keeps the shared beat engine tightly synced with audio playback, position, BPM, and user calibration */
+export function useBeatDriver(playing: boolean, bpm: number, seed: number, time = 0, tempo = 1, phaseMs = 0) {
   useEffect(() => {
-    beat.sync(time, playing, bpm, seed);
-  }, [time, playing, bpm, seed]);
+    beat.sync(time, playing, bpm, seed, tempo, phaseMs);
+  }, [time, playing, bpm, seed, tempo, phaseMs]);
 }

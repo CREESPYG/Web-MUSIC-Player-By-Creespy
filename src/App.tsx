@@ -256,7 +256,6 @@ export default function App() {
   const player = usePlayer(tracks, pushToast, () => topUpSimilar(false));
   playerRef.current = player;
   const track = tracks[player.index] ?? tracks[0];
-  useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time);
 
   /* ---------------- Phase 10 — "Up Next" auto-queue -----------------------
    * While the user is listening and the queue is about to run out (regular
@@ -671,6 +670,10 @@ export default function App() {
 
   /* ---------------- settings & view mode ---------------- */
   const { settings, update, glassVars, reset, maxUpload } = useSettings(theme, applyTheme);
+
+  /* ---------------- beat driver (visual sync; user calibration from settings) ---------------- */
+  useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time, settings.beatTempo, settings.beatPhase);
+
   const [panel, setPanel] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("queue");
   const [view, setView] = useState<ViewMode>(() => (localStorage.getItem("ripple-view") as ViewMode) || "full");

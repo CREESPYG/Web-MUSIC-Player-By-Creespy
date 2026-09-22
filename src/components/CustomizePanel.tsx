@@ -291,6 +291,25 @@ export function CustomizePanel({
               <SliderRow label="FX intensity" left="calm" right="max" min={0.2} max={1.8} step={0.05} value={settings.fxIntensity} onChange={(v: number) => update("fxIntensity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
               <SliderRow label="FX animation speed" left="slow" right="fast" min={0.4} max={2.0} step={0.1} value={settings.fxSpeed} onChange={(v: number) => update("fxSpeed", v)} format={(v: number) => `${v.toFixed(1)}x`} />
 
+              {/* Beat Sync — lock visuals to the song's real tempo & downbeats */}
+              <div className="mt-3 mb-1 flex items-center justify-between">
+                <span className="text-[12.5px] font-semibold text-[var(--ink)]">Beat sync (lock to the music)</span>
+                {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      update("beatTempo", 0);
+                      update("beatPhase", 0);
+                    }}
+                    className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)] hover:border-white/20 hover:text-white"
+                  >
+                    RESET
+                  </button>
+                )}
+              </div>
+              <SliderRow label="Beat tempo" left="−30%" right="+30%" min={-30} max={30} step={1} value={settings.beatTempo} onChange={(v: number) => update("beatTempo", v)} format={(v: number) => `${v > 0 ? "+" : ""}${v}%`} />
+              <SliderRow label="Beat phase" left="shift" right="shift" min={-250} max={250} step={10} value={settings.beatPhase} onChange={(v: number) => update("beatPhase", v)} format={(v: number) => `${v > 0 ? "+" : ""}${v}ms`} />
+
               <div className="mb-2.5 flex items-center justify-between">
                 <span className="text-[12.5px] font-semibold text-[var(--ink)]">Music beat reactive</span>
                 <Switch on={settings.fxAudioReactive} onChange={(v: boolean) => update("fxAudioReactive", v)} label="Music beat reactive" />

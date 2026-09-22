@@ -167,7 +167,23 @@ Current gates (must stay green each phase):
       tab switch, refresh, network loss/reconnect, minimize/background;
       breakpoint pass at 320/360/375/390/414/430/768
 
-### Phase 29 — Final Regression
+### Fix Batch — Beat Sync Overhaul  ✅ (user-reported: FX + disk bars off-beat)
+- [x] ROOT CAUSE (constraint): real beat can't be extracted from the
+      cross-origin YouTube iframe (no audio access — per spec), so visuals
+      pulsed on a hash-derived "guessed" BPM → noticeably off-tempo; plus
+      the 500ms UI position poll hard re-anchored the grid → visible jitter
+- [x] Drift-corrected clock: poll now absorbed smoothly (≤0.35s residual
+      blended, >0.35s = real seek → clean re-anchor); long-term drift
+      eliminated, grid stays steady
+- [x] "Beat sync" calibration (settings + CustomizePanel + mobile sliders):
+      Beat tempo ±30% (lock pulse rate to the song) & Beat phase ±250ms
+      (land kicks on real downbeats), with RESET; persisted
+- [x] Crisper kick/snare envelopes (faster attack, cleaner decay) so locked
+      pulses read clearly on the disk bars + all FX (orbs/aurora/wave)
+- [x] NEW src/hooks/useBeat.test.ts (3 tests): tempo timing, phase shift,
+      bpm re-anchor; gates PASS 34/34 + typecheck + build
+
+### Phase 29 — Final Regression   ← NEXT
 - [ ] 33-item checklist (search, playlists, all adapters, rooms, voice,
       visualizer, customization, desktop, mobile, a11y, perf, security)
 - [ ] Includes: accessibility focus/contrast/screen-reader pass

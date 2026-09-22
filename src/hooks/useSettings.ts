@@ -25,6 +25,8 @@ export interface Settings {
   fxAudioReactive: boolean;
   fxOnMedia: boolean;
   clickFx: boolean;
+  beatTempo: number;
+  beatPhase: number;
 }
 
 export const DEFAULTS: Settings = {
@@ -47,6 +49,8 @@ export const DEFAULTS: Settings = {
   fxAudioReactive: true,
   fxOnMedia: true,
   clickFx: true,
+  beatTempo: 0,
+  beatPhase: 0,
 };
 
 const KEY = "ripple.settings.v1";

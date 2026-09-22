@@ -260,6 +260,24 @@ export function MobileCustomizeScreen({
         <SliderRow label="FX Intensity" value={settings.fxIntensity} min={0.2} max={1.8} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => update("fxIntensity", v)} />
         <SliderRow label="FX Speed" value={settings.fxSpeed} min={0.4} max={2.0} step={0.1} fmt={(v) => `${v.toFixed(1)}x`} onChange={(v) => update("fxSpeed", v)} />
 
+        <div className="mt-3 mb-1 flex items-center justify-between">
+          <span className="font-display text-[11px] font-bold text-[var(--ink)]">Beat sync (lock to the music)</span>
+          {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                update("beatTempo", 0);
+                update("beatPhase", 0);
+              }}
+              className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)]"
+            >
+              RESET
+            </button>
+          )}
+        </div>
+        <SliderRow label="Beat Tempo" value={settings.beatTempo} min={-30} max={30} step={1} fmt={(v) => `${v > 0 ? "+" : ""}${v}%`} onChange={(v) => update("beatTempo", v)} />
+        <SliderRow label="Beat Phase" value={settings.beatPhase} min={-250} max={250} step={10} fmt={(v) => `${v > 0 ? "+" : ""}${v}ms`} onChange={(v) => update("beatPhase", v)} />
+
         <div className="divide-y divide-white/6">
           <SwitchRow label="Audio Reactive" desc="Pulses in sync with music beats" on={settings.fxAudioReactive} onChange={(v) => update("fxAudioReactive", v)} />
           {settings.bgStyle === "media" && (

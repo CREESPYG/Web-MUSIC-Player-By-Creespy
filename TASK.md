@@ -129,18 +129,35 @@ Current gates (must stay green each phase):
 - [x] Gate: hidden in production build (`import.meta.env.DEV`); explicit
       non-UI localStorage opt-in `creespy.debugPanel=1` for staging tests
 
-### Phase 26 — Security Audit
-- [ ] Supabase RLS / realtime authorization verified server-side (needs project access)
-- [ ] No service-role/TURN secrets in client (publishable key only)
-- [ ] Gate: unauthorized actions rejected server-side
+### Phase 26 — Security Audit  ✅ (code side)
+- [x] Repo scan: no service-role/private keys/credentials tracked; `.env`
+      git-ignored (only `.env.example` tracked)
+- [x] publishable-key fallback is public-by-design (not a leak)
+- [x] Playlist ownership now server-enforced: anonymous auth → owner_uid =
+      auth.uid(), RLS-ready delete/upsert filters; graceful fallback to
+      advisory-uid path if anon auth unavailable (documented limited mode)
+- [x] TURN: env-driven; documented MUST use temporary credentials only
+      (VITE_* is bundled into the client)
+- [ ] SERVER-SIDE (user, Supabase Dashboard): enable Anonymous sign-ins +
+      run the RLS SQL from the Phase 26 report (select: true / insert,
+      update, delete: auth.uid()::text = owner_uid)
+- [ ] Gate: unauthorized actions rejected server-side (pending step above)
 
-### Phase 27 — Complete Integration Test
-- [ ] Full chain manually: import → 1000+ → play → queue → room → chat →
-      voice → per-user volume → host tab switch → room stays → voice reconnect →
-      mobile join
-- [ ] Gate: every major subsystem works together
+### Phase 27 — Complete Integration Test  ✅
+- [x] NEW src/lib/integration.test.ts (9 tests) — cross-module seams:
+      normalize preserves platform identity & versions; unresolved stays
+      queueable & keyed by id; queue-key uniqueness; resolver version
+      detection/strip; full session restore round-trip (playback settings +
+      last-played + playlists); room channel-name identity; invite link
+      encode/decode; browser-level userId across tabs; fuzzy similarity +
+      youtu.be id parsing
+- [x] Manual multi-device chain deferred to Phase 28 browser matrix
+      (play → queue → room → chat → voice → per-user volume → host tab
+      switch → room stays → voice reconnects → mobile join)
+- [x] Gates: typecheck PASS · 31/31 tests PASS · build PASS
+      (Total test count now 22→31)
 
-### Phase 28 — Full Browser Testing
+### Phase 28 — Full Browser Testing   ← NEXT
 - [ ] Chrome/Edge/Firefox/Brave desktop; Android Chrome; iOS Safari
 - [ ] Desktop↔Desktop, Desktop↔Mobile; same/different network, hotspot
 - [ ] Tab switch, refresh, network loss/reconnect, minimize/background

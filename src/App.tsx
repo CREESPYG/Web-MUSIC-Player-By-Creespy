@@ -346,6 +346,7 @@ export default function App() {
   // Restore last played session on mount — exact queue order, current index,
   // and position (settings were already re-hydrated inside usePlayer).
   const restoredRef = useRef(false);
+  const sessionPendingRef = useRef<{ index: number; position: number } | null>(null);
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -367,8 +368,9 @@ export default function App() {
       TRACKS.forEach(indexTrack);
       const seen = new Set<string>();
       for (const id of saved) {
+        if (!id || seen.has(id)) continue;
         const t = known.get(id);
-        if (t && !seen.has(id)) {
+        if (t) {
           seen.add(id);
           reordered.push(t);
         }
@@ -379,21 +381,24 @@ export default function App() {
       window.setTimeout(() => {
         const p = playerRef.current;
         if (!p) return;
+        // If the player is already mounted and idle, seed the exact playback
+        // point right after cuing; otherwise defer until the cued track loads.
+        sessionPendingRef.current = lp.position > 0 ? { index: idx, position: lp.position } : null;
         p.cue(idx, false);
-        if (lp.position > 0) p.seek(lp.position);
+        if (lp.position > 0 && p.ready) p.seek(lp.position);
       }, 0);
     };
 
     if (reordered.length) {
       const kept = tracksRef.current.filter((t) => !reordered.some((r) => (r.videoId || r.id) === (t.videoId || t.id)));
       setTracks([...reordered, ...kept]);
-      const idx = reordered.findIndex((t) => t.videoId === lp.trackVideoId);
+      const idx = reordered.findIndex((t) => (t.videoId || t.id) === lp.trackVideoId);
       cueSaved(idx >= 0 ? idx : 0);
       return;
     }
 
     // Fallback: current queue, locate by track id.
-    const idx = tracksRef.current.findIndex((t) => t.videoId === lp.trackVideoId);
+    const idx = tracksRef.current.findIndex((t) => (t.videoId || t.id) === lp.trackVideoId);
     if (idx === -1) return;
     cueSaved(idx);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -405,8 +410,8 @@ export default function App() {
       const t = tracksRef.current[playerRef.current?.index ?? 0];
       if (!t) return;
       const pos = playerRef.current?.time ?? 0;
-      const queueIds = tracksRef.current.map((x) => x.videoId);
-      persistence.saveLastPlayed(t.videoId, pos, queueIds);
+      const queueIds = tracksRef.current.map((x) => x.videoId || x.id);
+      persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds);
     }, 10000); // save every 10 seconds
     return () => window.clearInterval(id);
   }, [player.playing]);
@@ -416,9 +421,26 @@ export default function App() {
     const t = tracks[player.index];
     if (!t) return;
     const pos = player.time ?? 0;
-    const queueIds = tracks.map((x) => x.videoId);
-    persistence.saveLastPlayed(t.videoId, pos, queueIds);
+    const queueIds = tracks.map((x) => x.videoId || x.id);
+    persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds);
   }, [player.index, player.playing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply a deferred seek once the restored (or user-selected) track is
+  // actually cued and mounted — anchor `/cue` parks it in pendingRef until
+  // onReady, so a raw seek right after cue could target a stale video.
+  useEffect(() => {
+    const pending = sessionPendingRef.current;
+    if (!pending || !player.ready) return;
+    if (player.index !== pending.index) return;
+    sessionPendingRef.current = null;
+    player.seek(pending.position);
+    // Heal: the index-change save fires with position 0 right after cue — write
+    // the real restored position back so the next refresh keeps the playhead.
+    const healed = tracksRef.current[pending.index];
+    if (healed) {
+      persistence.saveLastPlayed(healed.videoId || healed.id, pending.position, tracksRef.current.map((x) => x.videoId || x.id));
+    }
+  }, [player.ready, player.index, player]);
 
   // Save on page unload
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Track } from "../lib/media";
 import { similarity } from "../lib/media";
@@ -9,18 +9,7 @@ import { cn } from "../utils/cn";
 import { PlayIcon } from "./Icons";
 import { LinkIcon, PlusIcon, SparkIcon, TrashIcon } from "./UiIcons";
 
-export function Playlist({
-  tracks,
-  player,
-  onAdd,
-  onRemove,
-  busy,
-  error,
-  onFindSimilar,
-  similarBusy,
-  similarLive: _similarLive,
-  onReorder,
-}: {
+export interface PlaylistProps {
   tracks: Track[];
   player: PlayerApi;
   onAdd: (url: string) => void;
@@ -31,7 +20,20 @@ export function Playlist({
   similarBusy: boolean;
   similarLive: boolean | null;
   onReorder?: (from: number, to: number) => void;
-}) {
+}
+
+function PlaylistInner({
+  tracks,
+  player,
+  onAdd,
+  onRemove,
+  busy,
+  error,
+  onFindSimilar,
+  similarBusy,
+  similarLive: _similarLive,
+  onReorder,
+}: PlaylistProps) {
   const [draft, setDraft] = useState("");
   const [openInput, setOpenInput] = useState(false);
   const current = tracks[player.index];
@@ -266,3 +268,24 @@ export function Playlist({
     </div>
   );
 }
+
+/** Phase 14 — skip re-renders driven only by player time/volume ticks. */
+function playlistPropsEqual(prev: PlaylistProps, next: PlaylistProps): boolean {
+  if (prev.tracks !== next.tracks) return false;
+  if (prev.busy !== next.busy || prev.error !== next.error) return false;
+  if (prev.similarBusy !== next.similarBusy) return false;
+  if (prev.onAdd !== next.onAdd || prev.onRemove !== next.onRemove) return false;
+  if (prev.onReorder !== next.onReorder) return false;
+  if (prev.similarLive !== next.similarLive) return false;
+  const p = prev.player;
+  const q = next.player;
+  return (
+    p.index === q.index &&
+    p.playing === q.playing &&
+    p.shuffleMode === q.shuffleMode &&
+    p.repeat === q.repeat &&
+    p.durations === q.durations
+  );
+}
+
+export const Playlist = memo(PlaylistInner, playlistPropsEqual);

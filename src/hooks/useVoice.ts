@@ -3,6 +3,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { WebRtcVoiceManager } from "../lib/webrtc";
 import { backgroundKeepAlive } from "../lib/backgroundKeepAlive";
 import type { Member, MemberRole, VoiceParticipant } from "../lib/room";
+import { getTabSessionId } from "../lib/room";
 
 export type VoiceStatus =
   | "disconnected"
@@ -796,6 +797,20 @@ export function useVoice({
     setMemberCanSpeak,
     setMemberCanHear,
     kickFromVoice,
+    // Phase 17 — read-only debug telemetry (no secrets/credentials exposed)
+    debugGet: () => ({
+      roomId,
+      channelId: channel?.topic ?? null,
+      channelState: channel?.state ?? null,
+      status,
+      myUserId,
+      sessionId: getTabSessionId(),
+      visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+      disconnected: typeof navigator !== "undefined" ? !navigator.onLine : false,
+      voiceUserCount: participantsList.length,
+      selectedInput: selectedInput || null,
+      rtc: rtcRef.current?.debugSnapshot() ?? null,
+    }),
   };
 }
 

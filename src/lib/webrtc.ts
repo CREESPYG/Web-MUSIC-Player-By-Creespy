@@ -140,6 +140,36 @@ export class WebRtcVoiceManager {
     return this.peers.get(userId);
   }
 
+  /** Phase 17 — read-only telemetry for the debug panel (no secrets shown). */
+  public debugSnapshot() {
+    const peers: {
+      userId: string;
+      connectionState: string;
+      iceState: string;
+      signalingState: string;
+      reconnecting: boolean;
+    }[] = [];
+    this.peers.forEach((pc, userId) => {
+      peers.push({
+        userId,
+        connectionState: pc.connectionState,
+        iceState: pc.iceConnectionState,
+        signalingState: pc.signalingState,
+        reconnecting: this.reconnectTimers.has(userId),
+      });
+    });
+    return {
+      peers,
+      peerCount: this.peers.size,
+      canSpeak: this.canSpeak,
+      canHear: this.canHear,
+      selfMuted: this.selfMuted,
+      hostMuted: this.hostMuted,
+      localMicActive: !!this.localStream && this.localStream.active,
+      audioCtxState: this.audioContext?.state ?? "none",
+    };
+  }
+
   /** Start local microphone stream */
   public async startMicrophone(deviceId?: string): Promise<MediaStream> {
     await this.ensureAudioContext();

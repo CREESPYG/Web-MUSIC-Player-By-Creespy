@@ -53,6 +53,7 @@ import { persistence } from "./lib/persistence";
 import { deriveAccents } from "./lib/color";
 import { initMemoryOptimizer, setMemoryGovernorPlayerActive, trackBlobUrl, untrackBlobUrl } from "./lib/memoryManager";
 import { MobileShell } from "./components/mobile/MobileShell";
+import { DebugPanel } from "./components/DebugPanel";
 
 type MobileTab = "queue" | "clock";
 
@@ -1388,6 +1389,8 @@ onAddPlaylistToQueue={(list) => {
       <Toasts toasts={toasts} />
       {/* ---------------- Background import ---------------- */}
       <BackgroundImportWindow />
+      {/* ---------------- Dev diagnostics (Phase 17; hidden in prod) ---------------- */}
+      <DebugPanel getRoom={room.debugGet} getVoice={room.voice?.debugGet} />
     </div>
   );
 }

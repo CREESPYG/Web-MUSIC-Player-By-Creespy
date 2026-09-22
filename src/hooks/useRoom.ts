@@ -149,6 +149,9 @@ export function useRoom(handlers: RoomHandlers) {
   const isRecoveringRef = useRef(false);
   const hasCompletedInitialSyncRef = useRef(false);
   const publicRoomsCacheRef = useRef<Map<string, PublicRoomEntry>>(new Map());
+  // Phase 17 — debug telemetry counters (read-only, never drive behavior)
+  const lastBeatRef = useRef(0);
+  const reconnectCountRef = useRef(0);
 
   const isOwner = room?.hostId === me.current || status === "hosting";
   const myRole: MemberRole = useMemo(() => {
@@ -385,6 +388,7 @@ export function useRoom(handlers: RoomHandlers) {
     if (!canDrive) return;
     const pb = hRef.current.getPlayback();
     if (!pb) return;
+    lastBeatRef.current = Date.now();
     ch.send({
       type: "broadcast",
       event: "playback",
@@ -677,6 +681,7 @@ export function useRoom(handlers: RoomHandlers) {
   /* ---------- wire the members channel (partitioned for load balancing) ---------- */
   const bindRoomChannel = useCallback(
     (code: string, role: "host" | "member", info: RoomInfo) => {
+      reconnectCountRef.current += 1;
       hasCompletedInitialSyncRef.current = false;
       resubTimersRef.current.forEach(window.clearTimeout);
       resubTimersRef.current = [];
@@ -1920,6 +1925,25 @@ export function useRoom(handlers: RoomHandlers) {
     canDrive,
     publicRooms,
     voice,
+    // debug/telemetry — read-only; not used to drive any behavior
+    debugGet: () => ({
+      me: me.current,
+      roomCode: roomRef.current?.code ?? null,
+      hostId: roomRef.current?.hostId ?? null,
+      roomHostId: roomRef.current?.hostId ?? null,
+      status,
+      connection,
+      sessionId: tabSessionId.current,
+      presenceCount: membersRef.current.length,
+      lastBeatAgoMs: lastBeatRef.current ? Date.now() - lastBeatRef.current : null,
+      reconnectAttempts: reconnectCountRef.current,
+      channelStates: {
+        room: chanRef.current?.state ?? null,
+        chat: chatChanRef.current?.state ?? null,
+        sync: syncChanRef.current?.state ?? null,
+        lobby: lobbyRef.current?.state ?? null,
+      },
+    }),
     // actions
     createRoom,
     joinRoom,

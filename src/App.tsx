@@ -346,7 +346,13 @@ export default function App() {
   // Restore last played session on mount — exact queue order, current index,
   // and position (settings were already re-hydrated inside usePlayer).
   const restoredRef = useRef(false);
-  const sessionPendingRef = useRef<{ index: number; position: number } | null>(null);
+  const sessionPendingRef = useRef<{
+    index: number;
+    position: number;
+    savedId: string | null;
+    committedQueue: Track[] | null;
+    cued: boolean;
+  } | null>(null);
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -377,30 +383,35 @@ export default function App() {
       }
     }
 
-    const cueSaved = (idx: number) => {
-      window.setTimeout(() => {
-        const p = playerRef.current;
-        if (!p) return;
-        // If the player is already mounted and idle, seed the exact playback
-        // point right after cuing; otherwise defer until the cued track loads.
-        sessionPendingRef.current = lp.position > 0 ? { index: idx, position: lp.position } : null;
-        p.cue(idx, false);
-        if (lp.position > 0 && p.ready) p.seek(lp.position);
-      }, 0);
-    };
-
     if (reordered.length) {
       const kept = tracksRef.current.filter((t) => !reordered.some((r) => (r.videoId || r.id) === (t.videoId || t.id)));
-      setTracks([...reordered, ...kept]);
+      const committedQueue = [...reordered, ...kept];
+      setTracks(committedQueue);
       const idx = reordered.findIndex((t) => (t.videoId || t.id) === lp.trackVideoId);
-      cueSaved(idx >= 0 ? idx : 0);
+      // Cue is deferred to the effect below, which fires only once this exact
+      // array commits (reference-identity check) — previously a setTimeout(0)
+      // could index the *un-reordered* boot queue and silently cue a DIFFERENT
+      // track than the one shown in the header after refresh.
+      sessionPendingRef.current = {
+        index: idx >= 0 ? idx : 0,
+        position: lp.position,
+        savedId: idx >= 0 ? lp.trackVideoId : null,
+        committedQueue,
+        cued: false,
+      };
       return;
     }
 
     // Fallback: current queue, locate by track id.
     const idx = tracksRef.current.findIndex((t) => (t.videoId || t.id) === lp.trackVideoId);
     if (idx === -1) return;
-    cueSaved(idx);
+    sessionPendingRef.current = {
+      index: idx,
+      position: lp.position,
+      savedId: lp.trackVideoId,
+      committedQueue: tracksRef.current,
+      cued: false,
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save last played track + position periodically
@@ -425,12 +436,31 @@ export default function App() {
     persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds);
   }, [player.index, player.playing]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cue the restored track exactly once, and only once the rebuilt queue is
+  // actually committed (reference identity) — the cued video always matches
+  // the track the UI shows, because both resolve against the same array.
+  useEffect(() => {
+    const pending = sessionPendingRef.current;
+    if (!pending || pending.cued) return;
+    if (tracksRef.current !== pending.committedQueue) return;
+    if (pending.savedId) {
+      const i = tracksRef.current.findIndex((t) => (t.videoId || t.id) === pending.savedId);
+      if (i === -1) return;
+      pending.index = i;
+    }
+    if (tracksRef.current.length <= pending.index) return;
+    pending.cued = true;
+    const p = playerRef.current;
+    if (!p) return;
+    p.cue(pending.index, false);
+  }, [tracks]);
+
   // Apply a deferred seek once the restored (or user-selected) track is
   // actually cued and mounted — anchor `/cue` parks it in pendingRef until
   // onReady, so a raw seek right after cue could target a stale video.
   useEffect(() => {
     const pending = sessionPendingRef.current;
-    if (!pending || !player.ready) return;
+    if (!pending || !pending.cued || !player.ready) return;
     if (player.index !== pending.index) return;
     sessionPendingRef.current = null;
     player.seek(pending.position);

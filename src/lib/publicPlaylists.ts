@@ -6,12 +6,35 @@
  *
  * Table: public.public_playlists
  * - Readable by everyone (anon key, no auth required)
- * - Writable by owner_uid match (browser localStorage uid)
+ * - Writable only by the owning anonymous-auth user (auth.uid() = owner_uid,
+ *   enforced by RLS policies — see Phase 26 security report for the SQL).
+ *   Legacy fallback (project without anonymous sign-ins) uses a browser uid
+ *   advisory write path — documented limited mode.
  */
 
-import { supabase } from "./supabase";
+import { supabase, getAuthedClient } from "./supabase";
 import { userId } from "./room";
 import type { CustomPlaylist } from "./persistence";
+
+/**
+ * Phase 26 — server-enforced ownership:
+ *   · If anonymous auth is available, writes run as the auth user and
+ *     `owner_uid` = auth uid. RLS policies (see phase report SQL) then
+ *     REJECT updates/deletes where `auth.uid() <> owner_uid`.
+ *   · If auth is unavailable (project without anonymous sign-ins), falls
+ *     back to the legacy advisory browser-uid write path (limited mode —
+ *     ownership is client-asserted only). Fetch stays fully anon in both.
+ */
+async function writeOwner(): Promise<{ ownerUid: string; client: typeof supabase; serverEnforced: boolean }> {
+  const authed = await getAuthedClient();
+  if (authed) {
+    const { data } = await authed.auth.getUser();
+    if (data?.user?.id) {
+      return { ownerUid: data.user.id, client: authed, serverEnforced: true };
+    }
+  }
+  return { ownerUid: userId(), client: supabase, serverEnforced: false };
+}
 
 export interface PublicPlaylistRow {
   id: string;
@@ -51,11 +74,11 @@ export async function fetchGlobalPublicPlaylists(): Promise<CustomPlaylist[]> {
 
 /** Publish or update a single playlist in Supabase (upsert) */
 export async function publishPlaylist(playlist: CustomPlaylist): Promise<boolean> {
-  const uid = userId();
-  const { error } = await supabase.from("public_playlists").upsert(
+  const { ownerUid, client } = await writeOwner();
+  const { error } = await client.from("public_playlists").upsert(
     {
       id: playlist.id,
-      owner_uid: uid,
+      owner_uid: ownerUid,
       title: playlist.title,
       description: playlist.description || "",
       cover_art: playlist.coverArt || playlist.cover || null,
@@ -76,11 +99,12 @@ export async function publishPlaylist(playlist: CustomPlaylist): Promise<boolean
 
 /** Remove a playlist from the global directory (only owner can do this) */
 export async function unpublishPlaylist(playlistId: string): Promise<boolean> {
-  const { error } = await supabase
+  const { ownerUid, client } = await writeOwner();
+  const { error } = await client
     .from("public_playlists")
     .delete()
     .eq("id", playlistId)
-    .eq("owner_uid", userId());
+    .eq("owner_uid", ownerUid);
 
   if (error) {
     console.warn("[publicPlaylists] unpublish error:", error.message);

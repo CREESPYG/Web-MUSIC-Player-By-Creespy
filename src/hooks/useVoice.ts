@@ -440,15 +440,35 @@ export function useVoice({
     if (boundChannelRef.current === ch) return;
     boundChannelRef.current = ch;
 
+    /** Phase 21 — prune voice participants whose heartbeat stops (12s TTL,
+     *  heartbeat ticks every 2.5s ≈ 4 missed beats). Re-armed on any activity. */
+    const armMissing = (userId: string) => {
+      const prev = missingTimerRef.current.get(userId);
+      if (prev) window.clearTimeout(prev);
+      const t = window.setTimeout(() => {
+        missingTimerRef.current.delete(userId);
+        setVoiceUsers((prevUsers) => {
+          if (!prevUsers.has(userId)) return prevUsers;
+          const next = new Map(prevUsers);
+          next.delete(userId);
+          return next;
+        });
+        rtcRef.current?.removePeer(userId);
+        setSpeakingMap((prevMap) => {
+          if (!prevMap[userId]) return prevMap;
+          const next = { ...prevMap };
+          delete next[userId];
+          return next;
+        });
+      }, 12000);
+      missingTimerRef.current.set(userId, t);
+    };
+
     // A remote peer joined voice
     const onVoiceJoin = ({ payload }: { payload: VoiceParticipant }) => {
       if (!payload || payload.userId === myUserId) return;
 
-      const t = missingTimerRef.current.get(payload.userId);
-      if (t) {
-        window.clearTimeout(t);
-        missingTimerRef.current.delete(payload.userId);
-      }
+      armMissing(payload.userId);
 
       setVoiceUsers((prev) => {
         const next = new Map(prev);
@@ -489,11 +509,7 @@ export function useVoice({
       const p = payload.participant;
       if (p.userId === myUserId) return;
 
-      const t = missingTimerRef.current.get(p.userId);
-      if (t) {
-        window.clearTimeout(t);
-        missingTimerRef.current.delete(p.userId);
-      }
+      armMissing(p.userId);
 
       setVoiceUsers((prev) => {
         const next = new Map(prev);
@@ -515,11 +531,7 @@ export function useVoice({
       const p = payload.participant;
       if (p.userId === myUserId) return;
 
-      const t = missingTimerRef.current.get(p.userId);
-      if (t) {
-        window.clearTimeout(t);
-        missingTimerRef.current.delete(p.userId);
-      }
+      armMissing(p.userId);
 
       setVoiceUsers((prev) => {
         const existing = prev.get(p.userId);

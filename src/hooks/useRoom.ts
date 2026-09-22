@@ -139,6 +139,7 @@ export function useRoom(handlers: RoomHandlers) {
   const beatRef = useRef<number>(0);
   const banRef = useRef(banned);
   const joinTimersRef = useRef<number[]>([]);
+  const resubTimersRef = useRef<number[]>([]);
   const tabSessionId = useRef(getTabSessionId());
   const membersRef = useRef<Member[]>(members);
   membersRef.current = members;
@@ -319,11 +320,26 @@ export function useRoom(handlers: RoomHandlers) {
   }, []);
 
   /* ---------- cleanup ---------- */
+  /** Tracked re-subscribe: on socket blips re-join the SAME channel, but only
+   *  while it is still the live channel for the current room (never a ghost). */
+  const scheduleResubscribe = useCallback((ch: RealtimeChannel) => {
+    const t = window.setTimeout(() => {
+      resubTimersRef.current = resubTimersRef.current.filter((x) => x !== t);
+      if (chanRef.current !== ch && chatChanRef.current !== ch && syncChanRef.current !== ch) return;
+      try {
+        ch.subscribe();
+      } catch {}
+    }, 1500);
+    resubTimersRef.current.push(t);
+  }, []);
+
   const teardown = useCallback(() => {
     window.clearInterval(beatRef.current);
     beatRef.current = 0;
     joinTimersRef.current.forEach(window.clearTimeout);
     joinTimersRef.current = [];
+    resubTimersRef.current.forEach(window.clearTimeout);
+    resubTimersRef.current = [];
     if (lobbyRef.current) {
       supabase.removeChannel(lobbyRef.current);
       lobbyRef.current = null;
@@ -451,6 +467,61 @@ export function useRoom(handlers: RoomHandlers) {
   }, []);
 
   /* ---------- robust member roster tracking (tab-switch immune) ---------- */
+  /**
+   * Phase 21 — deterministic successor election: when the room's owner/host
+   * disappears (>75s) without a graceful leave, every member computes the same
+   * oldest-remaining winner; if the winner is ME I promote myself and broadcast
+   * host_transfer, otherwise I just adopt the winner locally (their own side
+   * handles the broadcast, so no duplicate toasts).
+   */
+  const electSuccessor = useCallback(
+    (roster: Map<string, Member>) => {
+      const winner = Array.from(roster.values()).reduce<Member | null>((acc, m) => {
+        if (m.role === "owner" || m.role === "host") return acc;
+        if (!acc || m.at < acc.at || (m.at === acc.at && m.id < acc.id)) return m;
+        return acc;
+      }, null);
+      if (!winner) return;
+      const nick = String(winner.nickname || winner.name || "Host");
+      const newRoomName = `${nick}'s Room`;
+      if (winner.id === me.current) {
+        setStatus("hosting");
+        setRoom((r) => (r ? { ...r, hostId: me.current, hostName: nick, name: newRoomName } : r));
+        if (roomRef.current) {
+          roomRef.current.hostId = me.current;
+          roomRef.current.hostName = nick;
+          roomRef.current.name = newRoomName;
+        }
+        window.clearInterval(beatRef.current);
+        beatRef.current = window.setInterval(pushPlayback, HEARTBEAT_MS);
+        chanRef.current
+          ?.track({
+            id: me.current,
+            nickname: savedNickname() || nick,
+            role: "owner",
+            state: "active",
+            at: Date.now(),
+          })
+          .catch(() => {});
+        chanRef.current
+          ?.send({
+            type: "broadcast",
+            event: "host_transfer",
+            payload: { newHostId: me.current, newHostName: nick, roomName: newRoomName },
+          })
+          .catch(() => {});
+      } else {
+        setRoom((r) => (r ? { ...r, hostId: winner.id, hostName: nick, name: newRoomName } : r));
+        if (roomRef.current) {
+          roomRef.current.hostId = winner.id;
+          roomRef.current.hostName = nick;
+          roomRef.current.name = newRoomName;
+        }
+      }
+    },
+    [pushPlayback]
+  );
+
   const syncMembers = useCallback((ch: RealtimeChannel) => {
     const state = ch.presenceState() as Record<string, any[]>;
     const now = Date.now();
@@ -536,6 +607,10 @@ export function useRoom(handlers: RoomHandlers) {
           const rawNick = String(cachedMember.nickname || "").trim();
           const cleanNick = rawNick && rawNick !== "false" && rawNick !== "undefined" ? rawNick : "A member";
           notifyMemberEvent("leave", uid, cleanNick);
+          // Host vanished without a graceful leave → auto handover (Phase 21)
+          if ((cachedMember.role === "owner" || roomRef.current?.hostId === uid) && statusRef.current === "member") {
+            electSuccessor(rosterMap);
+          }
         }
       }
     });
@@ -560,7 +635,7 @@ export function useRoom(handlers: RoomHandlers) {
     const combined = Array.from(rosterMap.values());
     combined.sort((a, b) => (a.role === "owner" ? -1 : b.role === "owner" ? 1 : a.role === "host" ? -1 : b.role === "host" ? 1 : a.at - b.at));
     setMembers(combined);
-  }, [myRole, nickname, notifyMemberEvent]);
+  }, [myRole, nickname, notifyMemberEvent, electSuccessor]);
 
   /* ---------- broadcast typing state ---------- */
   const sendTyping = useCallback((isTyping: boolean) => {
@@ -603,6 +678,8 @@ export function useRoom(handlers: RoomHandlers) {
   const bindRoomChannel = useCallback(
     (code: string, role: "host" | "member", info: RoomInfo) => {
       hasCompletedInitialSyncRef.current = false;
+      resubTimersRef.current.forEach(window.clearTimeout);
+      resubTimersRef.current = [];
       if (chanRef.current) {
         supabase.removeChannel(chanRef.current);
         chanRef.current = null;
@@ -980,28 +1057,23 @@ export function useRoom(handlers: RoomHandlers) {
 
       // Subscribe all channels with error recovery
       chatCh.subscribe((s) => {
+        if (chatChanRef.current !== chatCh) return;
         if (s === "SUBSCRIBED") {
           flushPendingChatQueue();
         } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
-          window.setTimeout(() => {
-            try {
-              chatCh.subscribe();
-            } catch {}
-          }, 1500);
+          scheduleResubscribe(chatCh);
         }
       });
 
       syncCh.subscribe((s) => {
+        if (syncChanRef.current !== syncCh) return;
         if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
-          window.setTimeout(() => {
-            try {
-              syncCh.subscribe();
-            } catch {}
-          }, 1500);
+          scheduleResubscribe(syncCh);
         }
       });
 
       ch.subscribe((s) => {
+        if (chanRef.current !== ch) return;
         if (s === "SUBSCRIBED") {
           setActiveChannel(ch);
           setConnection("connected");
@@ -1044,12 +1116,8 @@ export function useRoom(handlers: RoomHandlers) {
           }
         } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
           setConnection("reconnecting");
-          // Re-subscribe on channel error
-          window.setTimeout(() => {
-            try {
-              ch.subscribe();
-            } catch {}
-          }, 1500);
+          // Re-subscribe on channel error (tracked, ghost-safe)
+          scheduleResubscribe(ch);
         } else if (s === "CLOSED") {
           setConnection((c) => (statusRef.current === "idle" ? "offline" : c));
         }
@@ -1308,6 +1376,7 @@ export function useRoom(handlers: RoomHandlers) {
       if (ch) {
         ch.send({ type: "broadcast", event: "chat", payload: msg })
           .then((resp) => {
+            if (!chatChanRef.current && !chanRef.current) return;
             if (resp === "ok") {
               setChat((prev) =>
                 prev.map((c) => (c.id === msgId && c.status === "sending" ? { ...c, status: "sent" } : c))
@@ -1322,6 +1391,7 @@ export function useRoom(handlers: RoomHandlers) {
             }
           })
           .catch((err) => {
+            if (!chatChanRef.current && !chanRef.current) return;
             console.warn("[RoomChat] send error, queueing:", err);
             setChat((prev) =>
               prev.map((c) => (c.id === msgId ? { ...c, status: "failed" } : c))
@@ -1352,6 +1422,7 @@ export function useRoom(handlers: RoomHandlers) {
     if (ch) {
       ch.send({ type: "broadcast", event: "chat", payload: target })
         .then((resp) => {
+          if (!chatChanRef.current && !chanRef.current) return;
           if (resp === "ok") {
             setChat((prev) =>
               prev.map((c) => (c.id === id && c.status === "sending" ? { ...c, status: "sent" } : c))
@@ -1363,6 +1434,7 @@ export function useRoom(handlers: RoomHandlers) {
           }
         })
         .catch(() => {
+          if (!chatChanRef.current && !chanRef.current) return;
           setChat((prev) =>
             prev.map((c) => (c.id === id ? { ...c, status: "failed" } : c))
           );
@@ -1432,6 +1504,20 @@ export function useRoom(handlers: RoomHandlers) {
     setStatus("member");
     window.clearInterval(beatRef.current);
     announceDirectory(null);
+    // We are no longer the host — re-track the room presence as a member and
+    // stand down from the host lobby so no phantom second "host" lingers.
+    try {
+      lobbyRef.current?.untrack();
+    } catch {}
+    chanRef.current
+      ?.track({
+        id: me.current,
+        nickname: savedNickname() || targetNick,
+        role: "member",
+        state: "active",
+        at: Date.now(),
+      })
+      .catch(() => {});
   }, [members, announceDirectory]);
 
   const kick = useCallback((uid: string, ban = false) => {

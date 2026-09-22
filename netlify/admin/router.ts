@@ -16,6 +16,7 @@ import {
   tokenDigest,
   verifyPassword,
 } from "./core";
+import { authorize, effectiveGrants, type AdminAction } from "./rbac";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,10 +107,17 @@ const csrf = csrfTokenFor();
       if (method === "POST" && /\/auth\/change-password$/.test(path)) return changePassword(req, deps, cookies);
       if (method === "POST" && /\/auth\/logout$/.test(path)) return logout(req, deps, cookies);
       if (method === "GET" && /\/auth\/session$/.test(path)) return sessionInfo(req, deps, cookies);
+      if (method === "GET" && /\/auth\/me$/.test(path)) return me(req, deps, cookies);
       return json(404, { error: "Not found." });
     }
 
     // Every other admin endpoint requires an active session (Phase A: shell).
+    // Phase B+ gate individual resources behind requirePermission(role, action).
+    if (path === "/api/admin/audit" || path === "/api/admin/audit/") {
+      if (method !== "GET") return json(405, { error: "Method not allowed." });
+      return auditList(req, deps, cookies);
+    }
+
     return json(404, { error: "Not found." });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -142,6 +150,27 @@ async function requireSession(
     if (!csrfOk(cookieCsrf, req.csrfHeader ?? undefined)) return json(403, { error: "CSRF validation failed." });
   }
   return { ok: true, session, admin, csrfToken: cookies.get(CSRF_COOKIE) ?? generateCsrfToken() };
+}
+
+/**
+ * Session validation + role gate in one step. Returns a 403 when the caller's
+ * role lacks the required permission (Phase B: least privilege by default).
+ */
+async function requirePermission(
+  req: RouteRequest,
+  deps: RouterDeps,
+  cookies: Map<string, string>,
+  permission: AdminAction,
+  opts: { csrfRequired?: boolean } = { csrfRequired: true },
+): Promise<{ ok: true; session: AdminSession; admin: AdminUser; csrfToken: string } | RouteResult> {
+  const auth = await requireSession(req, deps, cookies, { csrfRequired: opts.csrfRequired ?? true });
+  const ctx = unwrap(auth);
+  if (!ctx) return auth as RouteResult;
+  if (!authorize(ctx.admin.role, permission)) {
+    await audit(deps, { admin_id: ctx.admin.admin_id, role: ctx.admin.role, action: `authz.denied.${permission}`, result: "fail", reason: "insufficient_permission", meta: { required: permission } }, req);
+    return json(403, { error: "You do not have permission to do that." });
+  }
+  return { ok: true, ...ctx } as { ok: true; session: AdminSession; admin: AdminUser; csrfToken: string };
 }
 
 /** Collapse the success/error union into either the session or null. */
@@ -245,6 +274,26 @@ async function sessionInfo(req: RouteRequest, deps: RouterDeps, cookies: Map<str
     display_name: admin.display_name,
     role: admin.role,
     must_change_password: admin.must_change_password,
+    permissions: effectiveGrants(admin.role),
+    expires_at: session.expires_at,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Self (identity + role + effective grants, Phase B authorization map)
+// ---------------------------------------------------------------------------
+
+async function me(req: RouteRequest, deps: RouterDeps, cookies: Map<string, string>): Promise<RouteResult> {
+  const got = await requireSession(req, deps, cookies, { csrfRequired: false });
+  const ctx = unwrap(got);
+  if (!ctx) return got as RouteResult;
+  const { session, admin } = ctx;
+  return json(200, {
+    admin_id: admin.admin_id,
+    display_name: admin.display_name,
+    role: admin.role,
+    permissions: effectiveGrants(admin.role),
+    session_id: session.session_id,
     expires_at: session.expires_at,
   });
 }
@@ -315,6 +364,19 @@ async function logout(req: RouteRequest, deps: RouterDeps, cookies: Map<string, 
       buildCookie(CSRF_COOKIE, "", { httpOnly: false, secure: secure(req), sameSite: "Strict", path: CSRF_COOKIE_PATH, maxAgeSeconds: 0 }),
     ],
   });
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail (Phase B: SUPER_ADMIN-only read — MODERATOR/ADMIN explicitly excluded)
+// ---------------------------------------------------------------------------
+
+async function auditList(req: RouteRequest, deps: RouterDeps, cookies: Map<string, string>): Promise<RouteResult> {
+  const got = await requirePermission(req, deps, cookies, "audit.read", { csrfRequired: false });
+  const ctx = unwrap(got);
+  if (!ctx) return got as RouteResult;
+  const entries = await deps.db.listAudit(50);
+  await audit(deps, { admin_id: ctx.admin.admin_id, role: ctx.admin.role, action: "audit.read", result: "ok", target_type: "audit", target_id: null }, req);
+  return json(200, { entries });
 }
 
 // ---------------------------------------------------------------------------

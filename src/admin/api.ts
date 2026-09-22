@@ -9,6 +9,7 @@ export interface SessionInfo {
   display_name: string;
   role: string;
   must_change_password: boolean;
+  permissions: string[];
   expires_at: string;
 }
 

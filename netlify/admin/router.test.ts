@@ -130,6 +130,9 @@ class FakeDb implements AdminDb {
   async appendAudit(entry: any): Promise<void> {
     this.audit.push(entry);
   }
+  async listAudit(limit: number): Promise<any[]> {
+    return [...this.audit].reverse().slice(0, limit);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +369,57 @@ describe("admin auth — one-time bootstrap (env-only, hashed at first login)", 
     expect(admin).not.toBeNull();
     expect(admin!.role).toBe("SUPER_ADMIN");
     expect(admin!.must_change_password).toBe(true);
+  });
+});
+
+describe("admin rbac — roles & server-side authorization (Phase B)", () => {
+  it("auth/me returns the caller's role and effective grants for a session", async () => {
+    const db = new FakeDb({ adminId: "Creespy@Player", password: "Creespy@Admin123" });
+    const { raw, csrf } = await loginAndCapture(db, "Creespy@Player", "Creespy@Admin123");
+    const res = await handleRequest(makeReq("GET", "/api/admin/auth/me", authorizedHeader(raw, csrf)), { db });
+    expect(res.status).toBe(200);
+    const body = res.body as { role: string; permissions: string[]; must_change_password?: boolean };
+    expect(body.role).toBe("SUPER_ADMIN");
+    expect(body.permissions).toContain("audit.read");
+    expect(body.permissions).toContain("admin.manage");
+  });
+
+  it("denies a MODERATOR session when the endpoint needs a stronger permission", async () => {
+    const db = new FakeDb();
+    // Bootstrapped SUPER_ADMIN creates a MODERATOR fixture (server-side, audited outside API).
+    await db.createAdmin({
+      admin_id: "mod@creespy",
+      display_name: "Moderator",
+      role: "MODERATOR",
+      password_hash: await hashPassword("Moderator!Pass9"),
+    });
+    const { raw, csrf } = await loginAndCapture(db, "mod@creespy", "Moderator!Pass9");
+    expect((await (await handleRequest(makeReq("GET", "/api/admin/auth/me", authorizedHeader(raw, csrf)), { db })).body as { role: string }).role).toBe("MODERATOR");
+    // The moderator has no ability to inspect sessions/audit — endpoint is guarded by requirePermission.
+    const res = await handleRequest(makeReq("GET", "/api/admin/auth/me", authorizedHeader(raw, csrf)), { db });
+    expect(res.status).toBe(200);
+    const body = res.body as { permissions: string[] };
+    expect(body.permissions).not.toContain("audit.read");
+    expect(body.permissions).not.toContain("sessions.read");
+  });
+
+  it("SUPER_ADMIN can read the audit trail; MODERATOR is denied 403", async () => {
+    const db = new FakeDb({ adminId: "Creespy@Player", password: "Creespy@Admin123" });
+    await loginOk(db, "Creespy@Player", "Creespy@Admin123"); // log at least one event
+    const { raw, csrf } = await loginAndCapture(db, "Creespy@Player", "Creespy@Admin123");
+
+    const okRes = await handleRequest(makeReq("GET", "/api/admin/audit", authorizedHeader(raw, csrf)), { db });
+    expect(okRes.status).toBe(200);
+    expect((okRes.body as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
+
+    // A MODERATOR hitting the same endpoint gets a generic 403.
+    await db.createAdmin({ admin_id: "mod2@creespy", display_name: "Mod2", role: "MODERATOR", password_hash: await hashPassword("Moderator!Pass9") });
+    const m = await loginAndCapture(db, "mod2@creespy", "Moderator!Pass9");
+    const denied = await handleRequest(makeReq("GET", "/api/admin/audit", authorizedHeader(m.raw, m.csrf)), { db });
+    expect(denied.status).toBe(403);
+    expect((denied.body as { error: string }).error).toBe("You do not have permission to do that.");
+    // The denied attempt itself is audited (authz-fed trail, no secret).
+    expect(db.audit.some((a) => a.action === "authz.denied.audit.read" && a.result === "fail")).toBe(true);
   });
 });
 

@@ -261,6 +261,28 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
 
 ## ADMIN PHASES (A → Q, sequential, report after each)
 
+**STATUS OVERVIEW:**
+
+| Phase | Title | Status code-side | Status ops/deploy |
+| ----- | ----- | ---------------- | ----------------- |
+| **A** | Secure Auth + Sessions (SERVER-SIDE) | ✅ DONE (committed `03a4646`, 31 admin tests) | ⬜ ops (schema+env+deploy) |
+| **B** | Roles & Server-Side Authorization | ✅ DONE (19 rbac tests, audit endpoint, suicide-guard) | — |
+| **C** | Dashboard Foundation | ▶ NEXT | — |
+| **D** | Users, Sessions & Presence | ⬜ | — |
+| **E** | Songs & Listening Analytics | ⬜ | — |
+| **F** | Playlist Management | ⬜ | — |
+| **G** | Rooms Management | ⬜ | — |
+| **H** | Chat Moderation | ⬜ | — |
+| **I** | Voice & Realtime Diagnostics | ⬜ | — |
+| **J** | Traffic, Time-Spent & Growth | ⬜ | — |
+| **K** | Imports & Resolution Monitoring | ⬜ | — |
+| **L** | System Health & Error Center | ⬜ | — |
+| **M** | Performance, Indexes & Aggregation | ⬜ | — |
+| **N** | Security Audit (red-team pass) | ⬜ | — |
+| **O** | Full Integration + Regression | ⬜ | — |
+| **P** | Production Deploy Ops | ⬜ | ⬜ (USER) |
+| **Q** | Final Admin Report | ⬜ | — |
+
 ### ADMIN Phase A — Secure Auth + Sessions (SERVER-SIDE)  ✅ (code-side) / ⬜ (ops)
 - [x] Netlify Functions bootstrap: `netlify/functions/admin.ts` (v2 handler),
       `netlify.toml` redirect `/api/admin/*` → function (BEFORE spa catch-all).
@@ -299,15 +321,26 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
       `/creespy/admin`; first login forces password change; then DELETE
       `ADMIN_INIT_*` vars.  → then ADMIN Phase B.
 
-### ADMIN Phase B — Roles & Server-Side Authorization
-- [ ] Roles: SUPER_ADMIN, ADMIN, MODERATOR, ANALYST (least-privilege by default).
-- [ ] Per-endpoint permission map (read vs write vs destructive union tables);
-      MODERATOR can't see sessions/audit; ANALYST read-only analytics.
-- [ ] No privilege escalation (SUPER_ADMIN can't be edited/created remotely; only
-      server-side bootstrap + DB-level, audited).
-- [ ] Authorization unit tests (role×action matrix) + isolation regression.
+### ADMIN Phase B — Roles & Server-Side Authorization  ✅ (code-side)
+- [x] `netlify/admin/rbac.ts` — single source of truth: `AdminRole`,
+      `AdminAction` (16 permissions), `ROLE_PERMISSIONS` matrix (least
+      privilege), `WRITE_ACTIONS` / `DESTRUCTIVE_ACTIONS` subsets,
+      `authorize()`, `effectiveGrants()`, `canManageTarget()` suicide-guard.
+- [x] Per-endpoint gate wired into router: `requirePermission(role, action)`
+      (403 + audited `authz.denied.*` on insufficient grant). MODERATOR has NO
+      `sessions.read` / `audit.read` / `admin.manage` / users. ANALYST holds
+      ZERO write/destructive actions (read-only analytics). ADMIN default-deny
+      on audit + admin-management.
+- [x] No-escalation: only SUPER_ADMIN may manage admins; even SUPER_ADMIN can
+      NEVER target another SUPER_ADMIN remotely (server-side bootstrap + DB only).
+- [x] `GET /api/admin/auth/me` — identity + role + effective grants (SPA nav).
+- [x] `GET /api/admin/audit` — SUPER_ADMIN-only audit trail read (200 entries),
+      itself audit-logged; MODERATOR/ADMIN get generic 403.
+- [x] Tests: `netlify/admin/rbac.test.ts` (14: matrix, MODERATOR/ANALYST
+      boundaries, suicide-guard) + router integration (me grants, audit 200/
+      403/denied-audited). Admin suite 31→50; TOTAL 67→86, all PASS.
 
-### ADMIN Phase C — Dashboard Foundation
+### ADMIN Phase C — Dashboard Foundation  [NEXT]
 - [ ] Elysium/landing: live cards (users, rooms, playback, errors, storage) —
       computed server-side, no secrets.
 - [ ] Dashboard route guard (role-scoped), stale-token refresh, logout-anywhere.
@@ -379,4 +412,4 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
 
 ---
 
-_Last updated after Phase 24 (seamless post-refresh resume) — gates green._
+_Last updated: ADMIN Phase B complete (code-side — RBAC matrix, per-endpoint gates, audit endpoint, suicide-guard; gates green: lint + 86/86 tests + build). ADMIN Phase C = NEXT. Open user-ops: Phase 26 RLS SQL, Phase 30 Netlify env, Phase 28 device matrix, ADMIN Phase A deploy (schema + env + first login). Player phases 0–31 code-side complete._

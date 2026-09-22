@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { AdminRole } from "./rbac";
 
-export type AdminRole = "SUPER_ADMIN" | "ADMIN" | "MODERATOR" | "ANALYST";
+export type { AdminRole } from "./rbac";
 
 export interface AdminUser {
   admin_id: string;
@@ -57,6 +58,7 @@ export interface AdminDb {
   replaceSession(sessionId: string, newTokenSha256: string, newExpiresAt: string): Promise<void>;
   countAdmins(): Promise<number>;
   appendAudit(entry: AuditEntry): Promise<void>;
+  listAudit(limit: number): Promise<AuditEntry[]>;
 }
 
 /** Parse "expires_at"/"locked_until" to epoch ms safely. */
@@ -178,5 +180,15 @@ export class SupabaseAdminDb implements AdminDb {
   async appendAudit(entry: AuditEntry): Promise<void> {
     const { error } = await this.client.from("admin_audit").insert(entry);
     if (error) throw new Error(supabaseError("appendAudit", error));
+  }
+
+  async listAudit(limit: number): Promise<AuditEntry[]> {
+    const { data, error } = await this.client
+      .from("admin_audit")
+      .select("admin_id, role, ip_address, action, target_type, target_id, result, reason, meta, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(supabaseError("listAudit", error));
+    return (data ?? []) as unknown as AuditEntry[];
   }
 }

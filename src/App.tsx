@@ -28,6 +28,7 @@ import {
 import { usePlayer, type PlayerApi } from "./hooks/usePlayer";
 import { useBeatDriver } from "./hooks/useBeat";
 import { usePresence } from "./hooks/usePresence";
+import { useOnline } from "./hooks/useOnline";
 import { useSettings } from "./hooks/useSettings";
 import { useNativeAudioBridge } from "./hooks/useNativeAudioBridge";
 import { BackgroundCanvas } from "./components/BackgroundCanvas";
@@ -104,6 +105,19 @@ export default function App() {
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
   const playerRef = useRef<PlayerApi | null>(null);
+  const isOnline = useOnline();
+
+  /* ---- Phase 15 — announce connectivity transitions once each way ---- */
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    if (prevOnlineRef.current === isOnline) return;
+    prevOnlineRef.current = isOnline;
+    pushToast(
+      isOnline
+        ? "Back online — live discovery resumed"
+        : "Offline — discovery and Up Next are paused",
+    );
+  }, [isOnline, pushToast]);
 
   const addTrack = useCallback(
     async (url: string) => {
@@ -212,6 +226,10 @@ export default function App() {
       if (similarBusy) return;
       const cur = tracksRef.current[playerRef.current?.index ?? 0];
       if (!cur) return;
+      if (!navigator.onLine) {
+        setSimilarLive(false);
+        return;
+      }
       setSimilarBusy(true);
       const known = new Set(tracksRef.current.map((t) => t.videoId));
       const { tracks: found, live } = await fetchSimilar(cur.videoId, known, 4, cur);
@@ -250,6 +268,7 @@ export default function App() {
   const upNextAtRef = useRef(0);
   useEffect(() => {
     if (!player.playing) return;
+    if (!isOnline) return;
     if (player.shuffleMode === "magic") return; // magic has its own 24-slot top-up
     if (!persistence.getPreferences().autoQueue) return;
     if (similarBusy) return;
@@ -294,7 +313,7 @@ export default function App() {
         /* discovery offline — stay silent in auto mode */
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.playing, player.shuffleMode, player.index, tracks.length, similarBusy]);
+  }, [player.playing, player.shuffleMode, player.index, tracks.length, similarBusy, isOnline]);
 
   /* ---------------- native Android audio bridge ---------------- */
   useNativeAudioBridge(
@@ -723,6 +742,7 @@ export default function App() {
   const [pinned, setPinned] = useState<Place | null>(() => getPinnedPlace());
 
   const loadWeather = useCallback(async (relocate = false) => {
+    if (!navigator.onLine) return;
     setWLoading(true);
     try {
       setWeather(await fetchWeather(relocate));

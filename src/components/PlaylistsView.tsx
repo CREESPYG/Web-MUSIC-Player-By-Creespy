@@ -5,6 +5,7 @@ import type { Track } from "../lib/trackModel";
 import { loadYouTubePlaylist } from "../lib/playlist";
 import { fetchTrackMeta, parsePlaylistId, parseYouTubeId } from "../lib/media";
 import { userId } from "../lib/room";
+import { bgImport } from "../lib/bgImport";
 import {
   isSpotifyUrl,
   loadSpotifyData,
@@ -367,8 +368,10 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
             spData.tracks,
             spData.title,
             (done, total) => {
-              setImportStatus(`Matching audio streams: ${done}/${total}...`);
-            }
+              setImportStatus(`Matching ${done}/${total} audio streams...`);
+              bgImport.setProgress(done, total, `Matching ${done}/${total} audio streams...`);
+            },
+            () => bgImport.get().cancelled
           );
 
           const updated = playlists.map((p) => {

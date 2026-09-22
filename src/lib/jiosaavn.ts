@@ -188,10 +188,12 @@ export async function loadJioSaavnResource(
 export async function convertJioSaavnTracksToPlayerTracks(
   result: JioSaavnImportResult,
   playlistTitle: string,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  isCancelled?: () => boolean
 ): Promise<Track[]> {
   const out: Track[] = [];
   for (let i = 0; i < result.items.length; i++) {
+    if (isCancelled?.()) break;
     onProgress?.(i, result.items.length);
     const it = result.items[i];
     let videoId: string | null = null;

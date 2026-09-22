@@ -42,6 +42,7 @@ import { TimeScreen } from "./components/TimeScreen";
 import { CustomizePanel } from "./components/CustomizePanel";
 import { RoomPanel } from "./components/RoomPanel";
 import { PlaylistsView } from "./components/PlaylistsView";
+import { BackgroundImportWindow } from "./components/BackgroundImportWindow";
 import { useRoom } from "./hooks/useRoom";
 import { readInviteCode, type PlaybackState } from "./lib/room";
 import { Toasts, type Toast } from "./components/Toasts";
@@ -1198,6 +1199,8 @@ export default function App() {
 
       {/* ---------------- Toasts ---------------- */}
       <Toasts toasts={toasts} />
+      {/* ---------------- Background import ---------------- */}
+      <BackgroundImportWindow />
     </div>
   );
 }

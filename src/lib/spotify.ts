@@ -239,9 +239,15 @@ function isGoodMatch(
 /**
  * Searches YouTube for a matching track (Title + Artist) and verifies the
  * result is the SAME song before returning it.
- * Strategy 1: keyless Piped/Invidious REST search with candidate scoring.
- * Strategy 2: hidden IFrame player cuePlaylist search, verified via oEmbed.
- * Returns null when no verified match exists (caller skips the song).
+ * STRATEGY 1 (primary): hidden-player search, verified through oEmbed metadata.
+ * STRATEGY 2 (backup): keyless Piped/Invidious REST search with candidate scoring.
+ * Returns null when no verified match exists — the caller then SKIPS that song
+ * instead of importing an unplayable placeholder (per user requirement).
+ *
+ * Ordering rationale: the keyless REST endpoints are public and frequently go
+ * down (403/404/502/HTML-not-JSON in live probes), while the hidden-iframe
+ * player search tunnels through the user's own YouTube session (CORS-free and
+ * reliable in any browser), so it must run FIRST.
  */
 export async function matchTrackToYouTube(
   title: string,
@@ -250,7 +256,24 @@ export async function matchTrackToYouTube(
 ): Promise<string | null> {
   const query = `${artist} - ${title}`.trim();
 
-  // Strategy 1: REST search with per-candidate verification
+  // Strategy 1 (PRIMARY): hidden-player search, verified via oEmbed metadata.
+  // This runs inside the browser's own YouTube context — no REST endpoint, no
+  // CORS, no public-instance availability — so it works even when every Piped
+  // / Invidious mirror is down. The candidate must still prove to be the SAME
+  // song (title tokens + artist token + duration window) before we accept it.
+  try {
+    const vid = await searchViaHiddenPlayer(`${query} audio`);
+    if (vid && vid.length === 11) {
+      const meta = await fetchTrackMeta(vid);
+      if (isGoodMatch(title, artist, meta.title, meta.artist, meta.duration, duration)) {
+        return vid;
+      }
+    }
+  } catch {
+    /* fallback */
+  }
+
+  // Strategy 2 (backup): REST search with per-candidate verification.
   try {
     const results = await searchYouTube(query, 10);
     for (const r of results) {
@@ -260,19 +283,6 @@ export async function matchTrackToYouTube(
         r.videoId.length === 11
       ) {
         return r.videoId;
-      }
-    }
-  } catch {
-    /* fallback */
-  }
-
-  // Strategy 2: hidden-player search, verified through oEmbed metadata
-  try {
-    const vid = await searchViaHiddenPlayer(`${query} audio`);
-    if (vid && vid.length === 11) {
-      const meta = await fetchTrackMeta(vid);
-      if (isGoodMatch(title, artist, meta.title, meta.artist, meta.duration, duration)) {
-        return vid;
       }
     }
   } catch {
@@ -448,7 +458,8 @@ async function resolveOneSpotifyTrack(
 export async function convertSpotifyTracksToPlayerTracks(
   spotifyTracks: SpotifyTrackInfo[],
   playlistTitle: string,
-  onResolveProgress?: (done: number, total: number) => void
+  onResolveProgress?: (done: number, total: number) => void,
+  isCancelled?: () => boolean
 ): Promise<Track[]> {
   const total = spotifyTracks.length;
   if (total === 0) {
@@ -467,6 +478,7 @@ export async function convertSpotifyTracksToPlayerTracks(
 
   async function worker(): Promise<void> {
     while (next < total) {
+      if (isCancelled?.()) return;
       const i = next++;
       await resolveOneSpotifyTrack(spotifyTracks[i], playlistTitle, i, slots);
       doneCount++;

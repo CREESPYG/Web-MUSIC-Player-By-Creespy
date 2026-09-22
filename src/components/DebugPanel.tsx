@@ -7,15 +7,22 @@ import { useEffect, useRef, useState } from "react";
  * telemetry. NEVER shows secrets: no Supabase keys, TURN credentials or SDP.
  *
  * Visibility rules (gate: hidden in normal production):
- *   · Vite dev server (`import.meta.env.DEV`) → shown automatically.
+ *   · Vite dev server → shown by default; hide via non-UI localStorage flag
+ *     `creespy.debugPanel === "0"`.
  *   · Production single-file build → hidden, UNLESS the explicit non-UI
- *     opt-in `creespy.debugPanel === "1"` is set in localStorage (used for
- *     staging/reconnection testing; not discoverable in the interface).
+ *     opt-in `creespy.debugPanel === "1"` is set (used for staging/recon-
+ *     nection testing; not discoverable in the interface). Clear the flag
+ *     to hide again.
  */
 function isDebugEnabled(): boolean {
   try {
-    if ((import.meta as any).env?.DEV) return true;
-    return localStorage.getItem("creespy.debugPanel") === "1";
+    const flag = localStorage.getItem("creespy.debugPanel");
+    if (import.meta && (import.meta as any).env?.DEV) {
+      // Dev server: shown by default, hide explicitly with the "0" flag.
+      return flag !== "0";
+    }
+    // Production single-file build: hidden unless the non-UI opt-in is set.
+    return flag === "1";
   } catch {
     return false;
   }

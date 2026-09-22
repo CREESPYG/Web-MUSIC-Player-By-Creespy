@@ -136,17 +136,44 @@ export type ConnState = "connected" | "reconnecting" | "offline";
 
 let memoryTabUid = "";
 
+/**
+ * Phase 22 — BROWSER-level identity shared by every tab of this browser.
+ * Previously per-tab: two tabs in one browser joined a room as two separate
+ * members and double-counted the public directory. Now the id lives in
+ * localStorage (shared across tabs), so identical sessions collapse into a
+ * single presence/member. A legacy per-tab id on window is adopted on the
+ * first call so already-joined sessions keep their identity across upgrade.
+ */
 export function userId(): string {
-  if (typeof window !== "undefined" && (window as any).__CREESPY_UID__) {
-    return (window as any).__CREESPY_UID__;
-  }
-  if (!memoryTabUid) {
-    memoryTabUid = `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    if (typeof window !== "undefined") {
-      (window as any).__CREESPY_UID__ = memoryTabUid;
+  if (typeof window === "undefined") {
+    if (!memoryTabUid) {
+      memoryTabUid = `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
+    return memoryTabUid;
   }
-  return memoryTabUid;
+  const legacy = (window as any).__CREESPY_UID__;
+  if (legacy) {
+    try {
+      localStorage.setItem("creespy.uid", legacy);
+    } catch {
+      /* noop */
+    }
+    return legacy;
+  }
+  try {
+    let id = localStorage.getItem("creespy.uid");
+    if (!id) {
+      id = `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      localStorage.setItem("creespy.uid", id);
+    }
+    (window as any).__CREESPY_UID__ = id;
+    return id;
+  } catch {
+    if (!memoryTabUid) {
+      memoryTabUid = `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return memoryTabUid;
+  }
 }
 
 export function savedNickname(): string {

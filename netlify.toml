@@ -12,6 +12,31 @@
   to = "https://open.spotify.com/embed/:splat"
   status = 200
 
+# Admin control plane — serverless API (must precede the SPA catch-all)
+[[redirects]]
+  from = "/api/admin/*"
+  to = "/.netlify/functions/admin"
+  status = 200
+
+# Admin API: never cached, sniffing blocked
+[[headers]]
+  for = "/api/admin/*"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate, max-age=0"
+    Pragma = "no-cache"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'none'; frame-ancestors 'none'"
+
+# Admin UI page (SPA island): served fresh, never cached past login state
+[[headers]]
+  for = "/creespy/admin*"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate, max-age=0"
+    Pragma = "no-cache"
+    X-Content-Type-Options = "nosniff"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

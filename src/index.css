@@ -275,3 +275,164 @@ input[type="range"].vol::-moz-range-thumb {
   pointer-events: none !important;
   border: none !important;
 }
+
+/* ================= Admin Control Plane (/.creespy/admin) ================= */
+.admin-root {
+  min-height: 100vh;
+  background: #05070d;
+  color: #e8eefb;
+  font-family: var(--font-body);
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.admin-header h1 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.admin-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+}
+
+.admin-card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 28px;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 18px 50px -28px rgba(0, 0, 0, 0.55);
+}
+
+.admin-card h2 {
+  margin: 0;
+  font-size: 16px;
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.admin-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #9fb0c8;
+}
+
+.admin-input {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.28);
+  color: #e8eefb;
+  font-size: 14px;
+  outline: none;
+}
+
+.admin-input:focus {
+  border-color: var(--acc0, #5eead4);
+}
+
+.admin-btn {
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eefb;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.admin-flash {
+  position: sticky;
+  top: 10px;
+  margin: 10px 24px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.admin-flash--error {
+  background: rgba(248, 113, 113, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #fecaca;
+}
+
+.admin-flash--success {
+  background: rgba(94, 234, 212, 0.12);
+  border: 1px solid rgba(94, 234, 212, 0.4);
+  color: #99f6e4;
+}
+
+.admin-muted {
+  color: #9fb0c8;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.admin-error {
+  color: #fca5a5;
+  font-size: 13px;
+  margin: 0;
+}
+
+.admin-policy {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.admin-dashboard {
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.admin-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-dl dt {
+  color: #9fb0c8;
+}
+
+.admin-dl dd {
+  margin: 0;
+  font-family: var(--font-tmono);
+  color: #e8eefb;
+}
+
+@media (max-width: 640px) {
+  .admin-card {
+    padding: 22px;
+  }
+}

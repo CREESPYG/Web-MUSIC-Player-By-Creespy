@@ -17,7 +17,7 @@ A single-file React music player built around one embedded YouTube IFrame: incre
 | `npm run dev`       | Local dev server                          |
 | `npm run typecheck` | `tsc --noEmit` — required before deploy   |
 | `npm run lint`      | Alias of typecheck (strict TS = lint); no ESLint vendored to keep the single-file build lean |
-| `npm test`          | vitest unit tests (files in `src/lib`)    |
+| `npm test`          | vitest unit tests (`src/**` + `netlify/admin/**`) |
 | `npm run build`     | Production single-file build into `dist/` |
 | `npm run preview`   | Serve the built `dist/` locally           |
 
@@ -32,6 +32,18 @@ Read from `import.meta.env` with hard-coded fallbacks in `src/lib/supabase.ts` �
 
 On Netlify set these three as build-time environment variables. `process.env.NODE_ENV` is replaced by Vite at build time (used to gate service-worker registration).
 
+## Admin Control Plane (Netlify Functions)
+
+The `/creespy/admin` control plane runs as Netlify Functions (server-side). It is a fully isolated code island — if the admin service or its env is misconfigured, the player site still boots unchanged.
+
+Server-side env vars (set in Netlify **Function settings** — never a `VITE_*` prefix, never in the client bundle):
+
+- `SUPABASE_URL` — same project URL as the player
+- `SUPABASE_SERVICE_ROLE_KEY` — privileged key, server-only, for admin tables
+- `ADMIN_INIT_ID` / `ADMIN_INIT_PASSWORD` — one-time bootstrap credentials (password is scrypt-hashed server-side at first login, then **delete these two vars** from Netlify); `ADMIN_INIT_DISPLAY_NAME` optional
+
+First deploy flow: run `supabase/admin_schema.sql` in the SQL editor → set the four env vars → deploy → open `/creespy/admin` → sign in (forces a password change) → remove `ADMIN_INIT_*`. No admin password or hash ever ships in the client bundle or repo.
+
 ## Deployment (Netlify)
 
 `netlify.toml` is already in place:
@@ -40,6 +52,7 @@ On Netlify set these three as build-time environment variables. `process.env.NOD
 - Proxy redirects so CORS-restricted music sources keep working in the single-file build:
   - `/api/jiosaavn/*` → `https://www.jiosaavn.com/*` (host header rewritten by Netlify)
   - `/api/spotify-embed/*` → `https://open.spotify.com/embed/*`
+  - `/api/admin/*` → `.netlify/functions/admin` (admin control-plane API)
   - `/*` → `/index.html` SPA fallback (proxies are matched first, so they are unaffected)
 
 Order matters: the api proxy rules live before the SPA fallback. If you add a new proxied provider, add its rule above the `/*` catch-all.

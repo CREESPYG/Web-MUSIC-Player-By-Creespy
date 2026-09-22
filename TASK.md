@@ -240,4 +240,143 @@ matrix). All automated gates green._
 
 ---
 
-_Last updated: after Phase 24 (seamless post-refresh resume) — gates green._
+# ADMIN CONTROL PLANE — CREESPY Admin (Netlify Functions)
+
+**Architecture (user-approved):** Netlify serverless Functions = the real,
+server-side enforcement layer. Client SPA only RENDERS; every admin decision
+(session, authz, hashing, CSRF, rate-limit) happens in `netlify/functions`
+(the trusted zone). No Node server is required locally — Functions are the
+"server".
+
+**Absolute invariants (never violated):**
+- No password plaintext, no password hash, no session token, no admin secret
+  anywhere in: frontend bundle, Git history, localStorage/sessionStorage,
+  URL params, `VITE_*` env. Only server-side env (`ADMIN_INIT_ID`/`ADMIN_INIT_PASSWORD`
+  bootstrap) and server-side scrypt hashes in Supabase.
+- Every `/api/admin/*` request authenticated server-side first (401 generic).
+- Every state-changing admin action is audit-logged (append-only, no password/token/secrets).
+- Admin plane is a SEPARATE code island: player boot/logic NEVER depends on admin
+  availability; admin down = player unaffected.
+- RLS: anon role can never read/write admin tables.
+
+## ADMIN PHASES (A → Q, sequential, report after each)
+
+### ADMIN Phase A — Secure Auth + Sessions (SERVER-SIDE)  ✅ (code-side) / ⬜ (ops)
+- [x] Netlify Functions bootstrap: `netlify/functions/admin.ts` (v2 handler),
+      `netlify.toml` redirect `/api/admin/*` → function (BEFORE spa catch-all).
+- [x] Supabase schema migration `supabase/admin_schema.sql`: `admin_users`
+      (scrypt hash + salt + role + must_change_password + failed_attempts +
+      locked_until), `admin_sessions` (only sha256 of token, expiry, geo+ua,
+      revoked), `admin_audit` (append-only via RLS). RLS denies anon entirely.
+- [x] One-time bootstrap (no plaintext in repo): on admin-user-table-empty,
+      function seeds from server-only env `ADMIN_INIT_ID`/`ADMIN_INIT_PASSWORD`,
+      scrypt-hashes, sets must_change_password=1; after first admin login instruct
+      to DELETE those env vars from Netlify.
+- [x] Password hashing: `node:crypto` scrypt (server-side), constant-time compare
+      (timingSafeEqual), strong policy (≥10 chars, upper+lower+digit+symbol, no
+      leet of init id).
+- [x] Session: 256-bit random token → store SHA-256 only; HttpOnly + Secure +
+      SameSite=Strict cookie `creespy_admin_session` (8h expiry, rotating).
+- [x] Brute-force: progressive delay + temp lock (5 fails → 30s, doubling,
+      max 15min via locked_until in DB), reset on success; generic error
+      "Invalid admin credentials." (never reveals user existence); CSRF token
+      cookie (`/` path, readable by SPA) + `X-CSRF-Token` header on all
+      mutating admin routes.
+- [x] `/creespy/admin` SPA (isolated island): Login screen → (first login) forced
+      "change password" screen → Phase A shell (identity + logout). Session check
+      on load via `/api/admin/auth/session`.
+- [x] Auth endpoints: `auth/login`, `auth/session`, `auth/change-password`,
+      `auth/logout`, plus `health` (CSRF issuing).
+- [x] Security tests (server-side logic): hash round-trip, wrong-password generic
+      error, unknown-admin timing-equalized denial, lockout timing + Retry-After,
+      session token never matches stored value, expired/revoked session rejected,
+      forced-change enforcement + policy reasons, CSRF required on mutation,
+      one-time env bootstrap, audit append-only & secret-free. **31 admin tests,
+      67 total, all PASS.**
+- [ ] OPS (user, once): run `supabase/admin_schema.sql` in SQL Editor; Netlify
+      Functions env `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` +
+      `ADMIN_INIT_ID`/`ADMIN_INIT_PASSWORD` (+ display name); deploy; open
+      `/creespy/admin`; first login forces password change; then DELETE
+      `ADMIN_INIT_*` vars.  → then ADMIN Phase B.
+
+### ADMIN Phase B — Roles & Server-Side Authorization
+- [ ] Roles: SUPER_ADMIN, ADMIN, MODERATOR, ANALYST (least-privilege by default).
+- [ ] Per-endpoint permission map (read vs write vs destructive union tables);
+      MODERATOR can't see sessions/audit; ANALYST read-only analytics.
+- [ ] No privilege escalation (SUPER_ADMIN can't be edited/created remotely; only
+      server-side bootstrap + DB-level, audited).
+- [ ] Authorization unit tests (role×action matrix) + isolation regression.
+
+### ADMIN Phase C — Dashboard Foundation
+- [ ] Elysium/landing: live cards (users, rooms, playback, errors, storage) —
+      computed server-side, no secrets.
+- [ ] Dashboard route guard (role-scoped), stale-token refresh, logout-anywhere.
+
+### ADMIN Phase D — Users, Sessions & Presence
+- [ ] List users (server query, admin_session joined, never user PII leaks),
+      active/inactive, sessions list per user, force-logout user (destructive,
+      audited), per-user session revocation.
+
+### ADMIN Phase E — Songs & Listening Analytics
+- [ ] Song top charts (plays, unique listeners, duration), per-song stats,
+      adaptive/browser breakdown, region distribution (server HTTP header hints).
+
+### ADMIN Phase F — Playlist Management
+- [ ] Public-playlist CRUD via admin (server-side, RLS-guarded), hidden/approved
+      flags, removals (audited, destructive).
+
+### ADMIN Phase G — Rooms Management
+- [ ] List/create/end rooms, per-room members, remove participant (destructive,
+      audited), room backoff/cleanup admin action.
+
+### ADMIN Phase H — Chat Moderation
+- [ ] Chat log view, delete message (audited), timeout/mute participant (audited),
+      per-room moderation actions.
+
+### ADMIN Phase I — Voice & Realtime Diagnostics
+- [ ] Voice session/participant health, RTC/peer congestion stats, realtime
+      channel status, anomaly finder (per-home-latency).
+
+### ADMIN Phase J — Traffic, Time-Spent & Growth Analytics
+- [ ] DAU/WAU/MAU, active-now graphs, time-spent per seat, retention, growth,
+      per-browser/region, export CSV (server generated).
+
+### ADMIN Phase K — Imports & Resolution Monitoring
+- [ ] Import queue depth, success/fail timeouts, per-resolver failure breakdown,
+      songs auto-retry stats, cache health.
+
+### ADMIN Phase L — System Health & Error Center
+- [ ] Backend/latency probes, error logs (no secrets), storage usage, DB row
+      counts, healthy/unhealthy indicators.
+
+### ADMIN Phase M — Performance, Indexes & Aggregation
+- [ ] Server-side aggregates + indexes migration, query-plan review, dashboard
+      query time budget (<500ms), indexes on the hot paths.
+
+### ADMIN Phase N — Security Audit (red-team pass)
+- [ ] IDOR sweep (every objectId belongs to caller scope), CSRF re-check, session
+      fixation, cookie flags, log-leak sweep, brute-force recheck, PLAYER island
+      re-verified fully isolated, no secrets anywhere.
+- [ ] Report: pass/fail per OWASP-ish check with evidence.
+
+### ADMIN Phase O — Full Integration + Regression
+- [ ] End-to-end: login → change password → dashboard → every admin view (with
+      seeded demo data), audit trail completeness, plus full main-site regression
+      (36 tests + deep player smoke).
+
+### ADMIN Phase P — Production Deploy Ops (USER + code)
+- [ ] Code: final env validation (Netlify: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+      ADMIN_INIT_*), sanitized build, no dev backdoor.
+- [ ] USER: run `supabase/admin_schema.sql`, cancel anon access on admin tables,
+      set Netlify env vars (service-role key server-side ONLY), deploy, first
+      login (forced password change), then delete ADMIN_INIT_* envs.
+- [ ] Smoke in prod: login flow, forced change, session expiry, player still
+      works on same site.
+
+### ADMIN Phase Q — Final Admin Report
+- [ ] Full CREESPY ADMIN report (architecture, security attestation, schema,
+      env checklist, known limitations, rollback plan, next steps).
+
+---
+
+_Last updated after Phase 24 (seamless post-refresh resume) — gates green._

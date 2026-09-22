@@ -112,9 +112,13 @@ export async function loadSpotifyData(
   if (!rawHtml) {
     // Try oEmbed as minimal fallback for single tracks
     try {
+      const ctrl = new AbortController();
+      const to = window.setTimeout(() => ctrl.abort(), 7000);
       const r = await fetch(
-        `https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/${type}/${id}`)}`
+        `https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/${type}/${id}`)}`,
+        { signal: ctrl.signal }
       );
+      window.clearTimeout(to);
       if (r.ok) {
         const j = await r.json();
         return {

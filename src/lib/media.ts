@@ -55,12 +55,25 @@ export interface TrackMeta {
   duration?: number;
 }
 
+/** Phase 17 — bounded fetch: a hung server can never stall the resolver/import chain. */
+async function fetchWithTimeout(url: string, ms: number): Promise<Response | null> {
+  const ctrl = new AbortController();
+  const to = window.setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(to);
+  }
+}
+
 export async function fetchTrackMeta(videoId: string): Promise<TrackMeta> {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
 
   try {
-    const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
-    if (r.ok) {
+    const r = await fetchWithTimeout(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, 4500);
+    if (r && r.ok) {
       const j = await r.json();
       return splitArtistTitle(j.title || "Unknown title", j.author_name || "YouTube");
     }
@@ -69,8 +82,8 @@ export async function fetchTrackMeta(videoId: string): Promise<TrackMeta> {
   }
 
   try {
-    const r = await fetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
-    if (r.ok) {
+    const r = await fetchWithTimeout(`https://noembed.com/embed?url=${encodeURIComponent(url)}`, 4500);
+    if (r && r.ok) {
       const j = await r.json();
       if (j.title) return splitArtistTitle(j.title, j.author_name || "YouTube");
     }

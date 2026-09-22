@@ -101,4 +101,64 @@ export function fetchDashboard(): Promise<{ cards: DashboardCards }> {
   return req<{ cards: DashboardCards }>("/dashboard");
 }
 
+// ---------------------------------------------------------------------------
+// Reports + moderation (Phases D–L)
+// ---------------------------------------------------------------------------
+
+export type ReportKind =
+  | "users"
+  | "admin_sessions"
+  | "admins"
+  | "songs"
+  | "playlists"
+  | "rooms"
+  | "chat"
+  | "voice"
+  | "traffic"
+  | "imports"
+  | "system"
+  | "errors"
+  | "perf";
+
+export function fetchReport(kind: ReportKind): Promise<{ data: Record<string, unknown> }> {
+  return req<{ data: Record<string, unknown> }>(`/${kind === "admin_sessions" ? "sessions" : kind}`);
+}
+
+export function revokeSession(sessionId: string): Promise<{ ok: boolean; revoked: string; admin_id: string }> {
+  return req<{ ok: boolean; revoked: string; admin_id: string }>("/sessions", {
+    method: "POST",
+    body: { session_id: sessionId },
+    withCsrf: true,
+  });
+}
+
+export interface CreateAdminResult {
+  ok: boolean;
+  admin_id: string;
+  display_name: string;
+  role: string;
+  temp_password: string;
+  must_change_password: boolean;
+}
+
+export function createAdmin(input: { displayName: string; role: string; adminId?: string }): Promise<CreateAdminResult> {
+  return req<CreateAdminResult>("/admins", { method: "POST", body: input, withCsrf: true });
+}
+
+export function hidePlaylist(id: string): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>(`/playlists/hide/${encodeURIComponent(id)}`, { method: "POST", withCsrf: true });
+}
+
+export function unhidePlaylist(id: string): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>(`/playlists/unhide/${encodeURIComponent(id)}`, { method: "POST", withCsrf: true });
+}
+
+export function removePlaylist(id: string): Promise<{ ok: boolean }> {
+  return req<{ ok: boolean }>(`/playlists/remove/${encodeURIComponent(id)}`, { method: "POST", withCsrf: true });
+}
+
+export function fetchTrafficCsv(): Promise<{ csv: string }> {
+  return req<{ csv: string }>("/traffic/export.csv");
+}
+
 export { AdminApiError };

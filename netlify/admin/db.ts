@@ -37,6 +37,34 @@ export interface AuditEntry {
   result: "ok" | "fail";
   reason?: string | null;
   meta?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+/** Every server-computed report the admin plane can request (Phase D–L). */
+export type AdminReportKind =
+  | "users"
+  | "admin_sessions"
+  | "admins"
+  | "songs"
+  | "playlists"
+  | "rooms"
+  | "chat"
+  | "voice"
+  | "traffic"
+  | "imports"
+  | "system"
+  | "errors"
+  | "perf";
+
+export interface AdminUserSafe {
+  admin_id: string;
+  display_name: string;
+  role: AdminRole;
+  must_change_password: boolean;
+  failed_attempts: number;
+  last_login_at: string | null;
+  last_failure_at: string | null;
+  created_at: string;
 }
 
 /**
@@ -59,7 +87,13 @@ export interface AdminDb {
   countAdmins(): Promise<number>;
   appendAudit(entry: AuditEntry): Promise<void>;
   listAudit(limit: number): Promise<AuditEntry[]>;
+  listAdminSessions(): Promise<AdminSession[]>;
+  listAdminUsers(): Promise<AdminUserSafe[]>;
+  revokeAllForAdmin(adminId: string): Promise<void>;
+  setPlaylistHidden(playlistId: string, hidden: boolean): Promise<void>;
+  removePlaylist(playlistId: string): Promise<void>;
   dashboardLive(): Promise<Record<string, unknown>>;
+  report(kind: AdminReportKind): Promise<Record<string, unknown>>;
 }
 
 /** Parse "expires_at"/"locked_until" to epoch ms safely. */
@@ -198,5 +232,50 @@ export class SupabaseAdminDb implements AdminDb {
     const { data, error } = await this.client.rpc("admin_dashboard_live");
     if (error) throw new Error(supabaseError("dashboardLive", error));
     return (data ?? {}) as Record<string, unknown>;
+  }
+
+  /** Server-side computed report, dispatched by kind (Phase D–L). */
+  async report(kind: AdminReportKind): Promise<Record<string, unknown>> {
+    const { data, error } = await this.client.rpc("admin_report", { p_kind: kind });
+    if (error) throw new Error(supabaseError(`report(${kind})`, error));
+    return (data ?? {}) as Record<string, unknown>;
+  }
+
+  async listAdminSessions(): Promise<AdminSession[]> {
+    const { data, error } = await this.client
+      .from("admin_sessions")
+      .select("session_id, admin_id, token_sha256, ip_address, user_agent, created_at, expires_at, revoked_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(supabaseError("listAdminSessions", error));
+    return (data ?? []) as unknown as AdminSession[];
+  }
+
+  async listAdminUsers(): Promise<AdminUserSafe[]> {
+    const { data, error } = await this.client
+      .from("admin_users")
+      .select("admin_id, display_name, role, must_change_password, failed_attempts, last_login_at, last_failure_at, created_at")
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(supabaseError("listAdminUsers", error));
+    return (data ?? []) as unknown as AdminUserSafe[];
+  }
+
+  async revokeAllForAdmin(adminId: string): Promise<void> {
+    const { error } = await this.client
+      .from("admin_sessions")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("admin_id", adminId)
+      .is("revoked_at", null);
+    if (error) throw new Error(supabaseError("revokeAllForAdmin", error));
+  }
+
+  async setPlaylistHidden(playlistId: string, hidden: boolean): Promise<void> {
+    const { error } = await this.client.from("public_playlists").update({ hidden }).eq("id", playlistId);
+    if (error) throw new Error(supabaseError("setPlaylistHidden", error));
+  }
+
+  async removePlaylist(playlistId: string): Promise<void> {
+    const { error } = await this.client.from("public_playlists").delete().eq("id", playlistId);
+    if (error) throw new Error(supabaseError("removePlaylist", error));
   }
 }

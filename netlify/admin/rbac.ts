@@ -22,6 +22,7 @@ export type AdminAction =
   | "users.list" // Phase D list player users
   | "users.session_revoke" // Phase D force-logout a user, revoke their sessions
   | "sessions.read" // Phase D admin sessions + revocation views
+  | "sessions.revoke" // Phase D revoke any single admin session (destructive)
   | "audit.read" // audit trail (most restricted)
   | "admin.manage" // create/edit/demote NON-super admins (Phase B+; never a SUPER_ADMIN target)
   | "songs.read" // Phase E listening analytics
@@ -38,6 +39,7 @@ export type AdminAction =
 export const WRITE_ACTIONS: readonly AdminAction[] = [
   "users.session_revoke",
   "admin.manage",
+  "sessions.revoke",
   "playlists.moderate",
   "rooms.manage",
   "chat.moderate",
@@ -46,6 +48,7 @@ export const WRITE_ACTIONS: readonly AdminAction[] = [
 /** Destructive subset — the highest-risk actions, audited with extra care. */
 export const DESTRUCTIVE_ACTIONS: readonly AdminAction[] = [
   "users.session_revoke",
+  "sessions.revoke",
   "playlists.moderate",
   "rooms.manage",
   "chat.moderate",
@@ -76,6 +79,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, readonly AdminAction[]> = {
     "users.list",
     "users.session_revoke",
     "sessions.read",
+    "sessions.revoke",
     "songs.read",
     "playlists.moderate",
     "rooms.manage",
@@ -96,6 +100,7 @@ export const ALL_ADMIN_ACTIONS: readonly AdminAction[] = [
   "users.list",
   "users.session_revoke",
   "sessions.read",
+  "sessions.revoke",
   "audit.read",
   "admin.manage",
   "songs.read",

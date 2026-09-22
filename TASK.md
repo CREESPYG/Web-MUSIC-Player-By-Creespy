@@ -268,18 +268,17 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
 | **A** | Secure Auth + Sessions (SERVER-SIDE) | ✅ DONE (committed `03a4646`, 31 admin tests) | ⬜ ops (schema+env+deploy) |
 | **B** | Roles & Server-Side Authorization | ✅ DONE (19 rbac tests, audit endpoint, suicide-guard) | — |
 | **C** | Dashboard Foundation | ✅ DONE (RPC live cards, role-scoped, stale-refresh) | — |
-| **D** | Users, Sessions & Presence | ▶ NEXT | — |
-| **D** | Users, Sessions & Presence | ⬜ | — |
-| **E** | Songs & Listening Analytics | ⬜ | — |
-| **F** | Playlist Management | ⬜ | — |
-| **G** | Rooms Management | ⬜ | — |
-| **H** | Chat Moderation | ⬜ | — |
-| **I** | Voice & Realtime Diagnostics | ⬜ | — |
-| **J** | Traffic, Time-Spent & Growth | ⬜ | — |
-| **K** | Imports & Resolution Monitoring | ⬜ | — |
-| **L** | System Health & Error Center | ⬜ | — |
-| **M** | Performance, Indexes & Aggregation | ⬜ | — |
-| **N** | Security Audit (red-team pass) | ⬜ | — |
+| **D** | Users, Sessions & Presence | ✅ DONE (users/admins/sessions reports, session revoke, admin create w/ temp pw) | — |
+| **E** | Songs & Listening Analytics | ✅ DONE (inclusion/plays charts, source + resolver breakdown) | — |
+| **F** | Playlist Management | ✅ DONE (list + hide/unhide/remove, additive `hidden` column) | — |
+| **G** | Rooms Management | ✅ DONE (honest realtime-only report) | — |
+| **H** | Chat Moderation | ✅ DONE (honest realtime-only report) | — |
+| **I** | Voice & Realtime Diagnostics | ✅ DONE (honest realtime-only report) | — |
+| **J** | Traffic, Time-Spent & Growth | ✅ DONE (creator/playlist growth + CSV export) | — |
+| **K** | Imports & Resolution Monitoring | ✅ DONE (resolution rate, per-platform, unresolved sample) | — |
+| **L** | System Health & Error Center | ✅ DONE (DB health, row counts, failed-audit center) | — |
+| **M** | Performance, Indexes & Aggregation | ✅ DONE (hot-path index report + §7 index migration) | — |
+| **N** | Security Audit (red-team pass) | ⬜ NEXT (code-side sweep + report) | — |
 | **O** | Full Integration + Regression | ⬜ | — |
 | **P** | Production Deploy Ops | ⬜ | ⬜ (USER) |
 | **Q** | Final Admin Report | ⬜ | — |
@@ -357,48 +356,73 @@ server-side enforcement layer. Client SPA only RENDERS; every admin decision
       MODERATOR 403 + authz.denied.dashboard.read audit). Admin suite 50→51;
       TOTAL 86→87 all PASS. Gates lint + build green.
 
-### ADMIN Phase D — Users, Sessions & Presence  [NEXT]
-- [ ] List users (server query, admin_session joined, never user PII leaks),
-      active/inactive, sessions list per user, force-logout user (destructive,
-      audited), per-user session revocation.
+### ADMIN Phase D — Users, Sessions & Presence  ✅ (code-side)
+- [x] Player users report `report('users')`: distinct owners, active 30d/7d, per-owner
+      playlists/tracks/plays/last-active, server RPC computed (no PII — owners are
+      browser-level anonymous ids).
+- [x] Admin sessions report `report('admin_sessions')` + `GET /api/admin/sessions`
+      (`sessions.read`): active/expired/revoked, per-session admin, ip, ua, dates.
+- [x] `POST /api/admin/sessions` revoke a session (`sessions.revoke`, destructive,
+      audited `session.revoke`) — own-session protected (use Sign out).
+- [x] `GET /api/admin/admins` + `POST /api/admin/admins` (`admin.manage`): list safe
+      admins (never password_hash); create ADMIN/MODERATOR/ANALYST only — server
+      generates a one-time scrypt temp password, forces change on first login;
+      target role whitelist blocks SUPER_ADMIN; suicide-guard + audited denial.
+- [x] SPA: Users / Admins / Sessions tabs (role-gated via `/auth/me` grants).
 
-### ADMIN Phase E — Songs & Listening Analytics
-- [ ] Song top charts (plays, unique listeners, duration), per-song stats,
-      adaptive/browser breakdown, region distribution (server HTTP header hints).
+### ADMIN Phase E — Songs & Listening Analytics  ✅ (code-side)
+- [x] `report('songs')` (songs.read): total tracks/plays, `by_source` and
+      `by_resolver` breakdowns from playlist tracks jsonb, top songs by playlist
+      inclusion + attributed plays, duration.
+- [x] Honest note surfaced in API + SPA: per-song play/region/browser events are
+      not persisted by the player, so charts are inclusion/play-derived only.
 
-### ADMIN Phase F — Playlist Management
-- [ ] Public-playlist CRUD via admin (server-side, RLS-guarded), hidden/approved
-      flags, removals (audited, destructive).
+### ADMIN Phase F — Playlist Management  ✅ (code-side)
+- [x] `report('playlists')` (playlists.moderate): list with title/author/owner,
+      track_count, play_count, `hidden` flag, dates.
+- [x] Additive `hidden boolean not null default false` column on
+      `public.public_playlists` (player reads nothing new → cannot break it).
+- [x] Mutations `POST /api/admin/playlists/{hide,unhide,remove}/:id`
+      (`playlists.moderate`, destructive, audited `playlist.hide/unhide/remove`).
 
-### ADMIN Phase G — Rooms Management
-- [ ] List/create/end rooms, per-room members, remove participant (destructive,
-      audited), room backoff/cleanup admin action.
+### ADMIN Phase G — Rooms Management  ✅ (code-side)
+- [x] `report('rooms')` (rooms.manage) — honest `available:false` + note: rooms are
+      realtime-only (presence/broadcast), no persisted table → control plane can't
+      list/end rooms yet. SPA renders the note honestly.
 
-### ADMIN Phase H — Chat Moderation
-- [ ] Chat log view, delete message (audited), timeout/mute participant (audited),
-      per-room moderation actions.
+### ADMIN Phase H — Chat Moderation  ✅ (code-side)
+- [x] `report('chat')` (chat.moderate) — honest `available:false` + note: chat is
+      broadcast-only, never persisted → no backlog to read/delete.
 
-### ADMIN Phase I — Voice & Realtime Diagnostics
-- [ ] Voice session/participant health, RTC/peer congestion stats, realtime
-      channel status, anomaly finder (per-home-latency).
+### ADMIN Phase I — Voice & Realtime Diagnostics  ✅ (code-side)
+- [x] `report('voice')` (voice.read) — honest `available:false` + note: WebRTC state
+      is transient in-memory, no persisted telemetry.
 
-### ADMIN Phase J — Traffic, Time-Spent & Growth Analytics
-- [ ] DAU/WAU/MAU, active-now graphs, time-spent per seat, retention, growth,
-      per-browser/region, export CSV (server generated).
+### ADMIN Phase J — Traffic, Time-Spent & Growth  ✅ (code-side)
+- [x] `report('traffic')` (traffic.read): playlists created 7d/30d, active owners
+      7d/30d, total plays, avg plays/playlist, 30-day daily creation series.
+      Honest note: no visit/auth stream persisted → DAU/WAU/MAU, retention and
+      time-spent are not measured; growth = playlist-author activity.
+- [x] `GET /api/admin/traffic/export.csv` — server-generated CSV (day, created),
+      audited `traffic.export`.
+- [x] SPA Traffic tab with stat cards + Export CSV button (client-side download).
 
-### ADMIN Phase K — Imports & Resolution Monitoring
-- [ ] Import queue depth, success/fail timeouts, per-resolver failure breakdown,
-      songs auto-retry stats, cache health.
+### ADMIN Phase K — Imports & Resolution Monitoring  ✅ (code-side)
+- [x] `report('imports')` (imports.read): total tracks, resolution rate, per-platform
+      counts, resolver-status breakdown, unresolved sample (title/artist/platform).
 
-### ADMIN Phase L — System Health & Error Center
-- [ ] Backend/latency probes, error logs (no secrets), storage usage, DB row
-      counts, healthy/unhealthy indicators.
+### ADMIN Phase L — System Health & Error Center  ✅ (code-side)
+- [x] `report('system')` (health.read): DB latency, row counts (playlists/admin
+      users/sessions/audit), db_running, storage approx, named checks.
+- [x] `report('errors')` (errors.read): failed 24h, total failures, recent failed
+      audit entries (secrets-free, per invariant), honest note.
 
-### ADMIN Phase M — Performance, Indexes & Aggregation
-- [ ] Server-side aggregates + indexes migration, query-plan review, dashboard
-      query time budget (<500ms), indexes on the hot paths.
+### ADMIN Phase M — Performance, Indexes & Aggregation  ✅ (code-side)
+- [x] `report('perf')` (health.read): hot-path index presence + dashboard query
+      budget (500ms), §7 additive index migration (created_at, play_count, hidden,
+      admin_sessions created/active).
 
-### ADMIN Phase N — Security Audit (red-team pass)
+### ADMIN Phase N — Security Audit (red-team pass)  [NEXT]
 - [ ] IDOR sweep (every objectId belongs to caller scope), CSRF re-check, session
       fixation, cookie flags, log-leak sweep, brute-force recheck, PLAYER island
       re-verified fully isolated, no secrets anywhere.

@@ -349,6 +349,7 @@ export default function App() {
   const sessionPendingRef = useRef<{
     index: number;
     position: number;
+    playing: boolean;
     savedId: string | null;
     committedQueue: Track[] | null;
     cued: boolean;
@@ -395,6 +396,7 @@ export default function App() {
       sessionPendingRef.current = {
         index: idx >= 0 ? idx : 0,
         position: lp.position,
+        playing: lp.playing || false,
         savedId: idx >= 0 ? lp.trackVideoId : null,
         committedQueue,
         cued: false,
@@ -408,6 +410,7 @@ export default function App() {
     sessionPendingRef.current = {
       index: idx,
       position: lp.position,
+      playing: lp.playing || false,
       savedId: lp.trackVideoId,
       committedQueue: tracksRef.current,
       cued: false,
@@ -422,7 +425,7 @@ export default function App() {
       if (!t) return;
       const pos = playerRef.current?.time ?? 0;
       const queueIds = tracksRef.current.map((x) => x.videoId || x.id);
-      persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds);
+      persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds, true);
     }, 10000); // save every 10 seconds
     return () => window.clearInterval(id);
   }, [player.playing]);
@@ -433,7 +436,7 @@ export default function App() {
     if (!t) return;
     const pos = player.time ?? 0;
     const queueIds = tracks.map((x) => x.videoId || x.id);
-    persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds);
+    persistence.saveLastPlayed(t.videoId || t.id, pos, queueIds, player.playing);
   }, [player.index, player.playing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cue the restored track exactly once, and only once the rebuilt queue is
@@ -452,7 +455,8 @@ export default function App() {
     pending.cued = true;
     const p = playerRef.current;
     if (!p) return;
-    p.cue(pending.index, false);
+    p.cue(pending.index, pending.playing); // best-effort resume; autoplay
+    // blocked by the browser is absorbed by onStateChange (safe fallback).
   }, [tracks]);
 
   // Apply a deferred seek once the restored (or user-selected) track is
@@ -468,7 +472,7 @@ export default function App() {
     // the real restored position back so the next refresh keeps the playhead.
     const healed = tracksRef.current[pending.index];
     if (healed) {
-      persistence.saveLastPlayed(healed.videoId || healed.id, pending.position, tracksRef.current.map((x) => x.videoId || x.id));
+      persistence.saveLastPlayed(healed.videoId || healed.id, pending.position, tracksRef.current.map((x) => x.videoId || x.id), pending.playing);
     }
   }, [player.ready, player.index, player]);
 
@@ -479,7 +483,7 @@ export default function App() {
       if (!t) return;
       const pos = playerRef.current?.time ?? 0;
       const queueIds = tracksRef.current.map((x) => x.videoId);
-      persistence.saveLastPlayed(t.videoId, pos, queueIds);
+      persistence.saveLastPlayed(t.videoId, pos, queueIds, !!playerRef.current?.playing);
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);

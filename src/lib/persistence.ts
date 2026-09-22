@@ -73,6 +73,7 @@ export interface PersistentStoreSchema {
     trackVideoId: string;
     position: number;
     queueVideoIds: string[];
+    playing: boolean;
     savedAt: number;
   };
 }
@@ -346,22 +347,28 @@ class PersistenceManager {
     return this.store.likedGlobalPlaylistIds || [];
   }
 
-  public saveLastPlayed(trackVideoId: string, position: number, queueVideoIds: string[]): void {
+  public saveLastPlayed(trackVideoId: string, position: number, queueVideoIds: string[], playing: boolean): void {
     this.store.lastPlayed = {
       trackVideoId,
       position,
       queueVideoIds,
+      playing: playing || false,
       savedAt: Date.now(),
     };
     this.saveToStorage();
   }
 
-  public getLastPlayed(): { trackVideoId: string; position: number; queueVideoIds: string[] } | null {
+  public getLastPlayed(): { trackVideoId: string; position: number; queueVideoIds: string[]; playing: boolean } | null {
     const lp = this.store.lastPlayed;
     if (!lp || !lp.trackVideoId) return null;
     // Don't restore if older than 7 days
     if (Date.now() - lp.savedAt > 7 * 24 * 60 * 60 * 1000) return null;
-    return { trackVideoId: lp.trackVideoId, position: lp.position, queueVideoIds: lp.queueVideoIds };
+    return {
+      trackVideoId: lp.trackVideoId,
+      position: lp.position,
+      queueVideoIds: lp.queueVideoIds,
+      playing: lp.playing || false,
+    };
   }
 }
 

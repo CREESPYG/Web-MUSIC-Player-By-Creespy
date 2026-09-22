@@ -60,8 +60,12 @@ describe("persistence.preferences", () => {
 
 describe("persistence.lastPlayed", () => {
   it("round-trips a saved session including unresolved-track ids", () => {
-    persistence.saveLastPlayed("abc123", 87.5, ["vid1", "local-id-2"]);
-    expect(persistence.getLastPlayed()).toEqual({ trackVideoId: "abc123", position: 87.5, queueVideoIds: ["vid1", "local-id-2"] });
+    persistence.saveLastPlayed("abc123", 87.5, ["vid1", "local-id-2"], true);
+    expect(persistence.getLastPlayed()).toEqual({ trackVideoId: "abc123", position: 87.5, queueVideoIds: ["vid1", "local-id-2"], playing: true });
+
+    // playing false stays false
+    persistence.saveLastPlayed("abc123", 87.5, ["vid1", "local-id-2"], false);
+    expect(persistence.getLastPlayed()).toEqual({ trackVideoId: "abc123", position: 87.5, queueVideoIds: ["vid1", "local-id-2"], playing: false });
   });
   it("returns null when nothing has been played", () => {
     expect(persistence.getLastPlayed()).toBeNull();
@@ -70,7 +74,7 @@ describe("persistence.lastPlayed", () => {
 
 describe("persistence durability", () => {
   it("survives a fresh instance (real JSON round-trip)", async () => {
-    persistence.saveLastPlayed("x", 5, ["a", "b"]);
+    persistence.saveLastPlayed("x", 5, ["a", "b"], false);
     persistence.setPlayback({ volume: 11 });
 
     vi.resetModules();

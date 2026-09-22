@@ -32,6 +32,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
+  const request = event.request;
 
   // Exclude external APIs, audio streaming buffers, and YouTube iframes from service worker cache
   if (
@@ -39,31 +40,59 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("googlevideo.com") ||
     url.hostname.includes("open-meteo.com") ||
     url.hostname.includes("spotify.com") ||
-    event.request.method !== "GET"
+    request.method !== "GET"
   ) {
     return;
   }
 
+  // Navigations: network-first so a fresh deploy shows immediately, with a
+  // cached shell as the offline fallback (avoids serving stale HTML twice).
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const network = response.clone();
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => {
+                cache.put(request, response);
+                cache.put("/", network);
+              })
+              .catch(() => {});
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches
+            .match("/")
+            .then((c) => c || caches.match("/index.html"));
+        })
+    );
+    return;
+  }
+
+  // Same-origin assets: stale-while-revalidate.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(request).then((cached) => {
       if (cached) {
         // Return cached and fetch in background for update
-        fetch(event.request)
+        fetch(request)
           .then((response) => {
             if (response && response.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response));
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, response));
             }
           })
           .catch(() => {});
         return cached;
       }
-      return fetch(event.request).then((response) => {
+      return fetch(request).then((response) => {
         if (!response || response.status !== 200 || response.type !== "basic") {
           return response;
         }
         const responseToCache = response.clone();
         caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
+          cache.put(request, responseToCache);
         });
         return response;
       });

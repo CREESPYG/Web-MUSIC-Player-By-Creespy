@@ -4,7 +4,6 @@
   "description": "An immersive animated glassmorphism music player with music-synced visuals and live rooms.",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#040913",
   "theme_color": "#040913",
   "icons": [

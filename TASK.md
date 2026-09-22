@@ -117,17 +117,12 @@ Current gates (must stay green each phase):
 
 ## ✅ DONE
 
-### Phase 17 — Voice Debugging System
-- [x] Dev-only DebugPanel (bottom-left): room status/conn, user/session id,
-      room code, host, presence count, heartbeat age, reconnect attempts,
-      all 4 Supabase channel states (room/chat/sync/lobby), voice status +
-      channel state, voice users, mic active + selected input, speech
-      perms/mute, online & tab visibility, per-peer conn/ICE/signaling/reconnect
-- [x] Polls via 1s interval, `role="log"`, monospace, pointer-events-none
-- [x] Read-only telemetry getters (useRoom.debugGet / useVoice.debugGet /
-      WebRtcVoiceManager.debugSnapshot) — never drive behavior; no secrets
-- [x] Gate: hidden in production build (`import.meta.env.DEV`); explicit
-      non-UI localStorage opt-in `creespy.debugPanel=1` for staging tests
+### Phase 17 — Voice/Debug Telemetry  ⚠️ (panel removed per user request)
+- [x] Read-only telemetry getters added (useRoom.debugGet /
+      useVoice.debugGet / WebRtcVoiceManager.debugSnapshot) — KEPT (no UI,
+      harmless, no secrets; useful for future tooling if desired)
+- [~] DebugPanel component was added, then REMOVED on request — no debug
+      UI anywhere now (build/typecheck/test clean after removal)
 
 ### Phase 26 — Security Audit  ✅ (code side)
 - [x] Repo scan: no service-role/private keys/credentials tracked; `.env`

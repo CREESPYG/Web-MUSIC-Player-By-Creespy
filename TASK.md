@@ -203,20 +203,40 @@ Current gates (must stay green each phase):
       engines)
 - [x] Tests 36/36 PASS + typecheck PASS + build PASS
 
-### Phase 29 — Final Regression   ← NEXT
-- [ ] 33-item checklist (search, playlists, all adapters, rooms, voice,
-      visualizer, customization, desktop, mobile, a11y, perf, security)
-- [ ] Includes: accessibility focus/contrast/screen-reader pass
+### Phase 29 — Final Regression  ✅ (code-side) / ⬜ (device manual)
+- [x] Full code sweep — search, playlists, all 4 adapters, room/voice seams,
+      visualizer/beat, customization, desktop, mobile, security: covered by
+      36/36 automated tests + typecheck + the module audits in Phases 22–28
+- [x] A11y: `prefers-reduced-motion` everywhere + `:focus-visible` accent
+      outline (index.css); screen-reader pass done statically (labels on
+      icon buttons / role="log" removed with DebugPanel; nav aria labels)
+- [x] Console hygiene: no console.error / console.log / TODO / FIXME in src
+      (only intentional console.warn on gracefully-degraded paths)
+- [x] No debug UI, no secrets, no fixed-width overflow, no perf regressions
+- [ ] Manual device matrix (folded into outstanding Phase 28 checklist)
 
-### Phase 30 — Final Build / Deployment Validation
-- [ ] Add lint script (missing today) or document "typecheck as lint"
-- [ ] Clean production build; env vars (TURN) set on Netlify
-- [ ] Supabase prod config + RLS + no secrets exposed
-- [ ] No dev debug UI exposed; no console errors; smoke tests
+### Phase 30 — Final Build / Deployment Validation  ✅ (code-side) / ⬜ (ops)
+- [x] `lint` script added (alias of strict typecheck — documented in README:
+      ESLint deliberately not vendored to keep singlefile build lean)
+- [x] Clean production build PASS (dist/index.html ~1,092 kB / gzip ~296.5 kB);
+      no dev debug UI exposed (DebugPanel gone); no console errors
+- [x] Smoke: gates run fresh post-regression — lint PASS · 36/36 tests PASS ·
+      build PASS
+- [ ] OPS (user, once): set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` +
+      `VITE_TURN_*` (temporary creds only) on Netlify; enable anonymous
+      sign-ins + run RLS SQL (Phase 26); verify prod rooms/voice/playlist-write
 
-### Phase 31 — Final Report
-- [ ] 32-section report (audit → root causes → architecture → DB → each
-      subsystem → limitations → SFU recommendation)
+### Phase 31 — Final Report  ✅ (delivered)
+- [x] Full 32-section report delivered to the user (see chat) covering:
+      audit → root causes → architecture triage → DB/data model → search &
+      adapters → playlist/resolver → player/persistence → media keys →
+      rooms → voice/WebRTC → sync/visuals → debug telemetry → a11y → perf →
+      offline/PWA → security → limitations → SFU recommendation → ops
+      checklist → NEXT STEPS (user)
+
+_Last updated: Phases 27→31 complete (code-side), two user-ops checklists
+stand open (Phase 26 RLS + Phase 30 Netlify env, and the Phase 28 device
+matrix). All automated gates green._
 
 ---
 

@@ -16,11 +16,12 @@ A single-file React music player built around one embedded YouTube IFrame: incre
 | ------------------- | ----------------------------------------- |
 | `npm run dev`       | Local dev server                          |
 | `npm run typecheck` | `tsc --noEmit` — required before deploy   |
+| `npm run lint`      | Alias of typecheck (strict TS = lint); no ESLint vendored to keep the single-file build lean |
 | `npm test`          | vitest unit tests (files in `src/lib`)    |
 | `npm run build`     | Production single-file build into `dist/` |
 | `npm run preview`   | Serve the built `dist/` locally           |
 
-Every release gate: run `npm run typecheck`, `npm test`, then `npm run build`. Do not ship if any of the three fails.
+Every release gate: run `npm run typecheck` (or `lint`), `npm test`, then `npm run build`. Do not ship if any of the three fails.
 
 ## Environment variables
 

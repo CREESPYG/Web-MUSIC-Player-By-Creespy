@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { THEMES, type Theme } from "../themes";
+import { beat } from "../hooks/useBeat";
 import {
   CloseIcon,
   DownloadIcon,
@@ -50,6 +51,7 @@ const BG_OPTS: { v: BgStyle; label: string }[] = [
 
 const FX_OPTS: { v: FxType; label: string; desc: string }[] = [
   { v: "full", label: "Full", desc: "Orbs + Waves + Stars" },
+  { v: "spectrum", label: "Spectrum", desc: "Wavy Music Bars" },
   { v: "aurora", label: "Aurora", desc: "Northern Lights" },
   { v: "wave", label: "Wave", desc: "Sine Ribbons" },
   { v: "orbs", label: "Orbs", desc: "Cosmic Plasma" },
@@ -150,6 +152,15 @@ export function CustomizePanel({
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Place[]>([]);
   const [searching, setSearching] = useState(false);
+  const [tapBpm, setTapBpm] = useState<number | null>(null);
+  const onTapBeat = () => {
+    const r = beat.tapBeat();
+    setTapBpm(r.bpm || null);
+    if (r.bpm) {
+      update("beatTempo", r.tempoPct);
+      update("beatPhase", r.phaseMs);
+    }
+  };
 
   useEffect(() => {
     if (q.trim().length < 2) {
@@ -292,22 +303,35 @@ export function CustomizePanel({
               <SliderRow label="FX animation speed" left="slow" right="fast" min={0.4} max={2.0} step={0.1} value={settings.fxSpeed} onChange={(v: number) => update("fxSpeed", v)} format={(v: number) => `${v.toFixed(1)}x`} />
 
               {/* Beat Sync — lock visuals to the song's real tempo & downbeats */}
-              <div className="mt-3 mb-1 flex items-center justify-between">
+              <div className="mt-3 mb-1 flex items-center justify-between gap-2">
                 <span className="text-[12.5px] font-semibold text-[var(--ink)]">Beat sync (lock to the music)</span>
-                {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+                <div className="flex items-center gap-1.5">
+                  {tapBpm ? <span className="font-tmono text-[10px] text-[var(--acc0)]">≈{tapBpm} BPM</span> : null}
                   <button
                     type="button"
-                    onClick={() => {
-                      update("beatTempo", 0);
-                      update("beatPhase", 0);
-                    }}
-                    className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)] hover:border-white/20 hover:text-white"
+                    onClick={onTapBeat}
+                    className="rounded-full border border-[var(--acc0)]/50 bg-[var(--acc0)]/10 px-2.5 py-0.5 font-tmono text-[9.5px] font-bold text-[var(--acc0)] hover:border-[var(--acc0)] active:scale-95"
                   >
-                    RESET
+                    TAP ×4
                   </button>
-                )}
+                  {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        update("beatTempo", 0);
+                        update("beatPhase", 0);
+                      }}
+                      className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)] hover:border-white/20 hover:text-white"
+                    >
+                      RESET
+                    </button>
+                  )}
+                </div>
               </div>
-              <SliderRow label="Beat tempo" left="−30%" right="+30%" min={-30} max={30} step={1} value={settings.beatTempo} onChange={(v: number) => update("beatTempo", v)} format={(v: number) => `${v > 0 ? "+" : ""}${v}%`} />
+              <p className="mb-1.5 font-tmono text-[9px] leading-snug text-[var(--dim)]">
+                Gaane ke beat pe 4 baar tap karo — visuals uski asli tempo + downbeat pe lock ho jayenge (aur saved rahega).
+              </p>
+              <SliderRow label="Beat tempo" left="−45%" right="+45%" min={-45} max={45} step={1} value={settings.beatTempo} onChange={(v: number) => update("beatTempo", v)} format={(v: number) => `${v > 0 ? "+" : ""}${v}%`} />
               <SliderRow label="Beat phase" left="shift" right="shift" min={-250} max={250} step={10} value={settings.beatPhase} onChange={(v: number) => update("beatPhase", v)} format={(v: number) => `${v > 0 ? "+" : ""}${v}ms`} />
 
               <div className="mb-2.5 flex items-center justify-between">

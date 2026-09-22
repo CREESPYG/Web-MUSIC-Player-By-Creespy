@@ -3,7 +3,7 @@ import type { Theme } from "../themes";
 
 export type BgStyle = "solid" | "dynamic" | "wave" | "media" | "live";
 export type BgKind = "url" | "library" | "none";
-export type FxType = "full" | "aurora" | "wave" | "orbs" | "particles" | "minimal";
+export type FxType = "full" | "aurora" | "wave" | "orbs" | "particles" | "minimal" | "spectrum";
 
 export interface Settings {
   themeId: string;

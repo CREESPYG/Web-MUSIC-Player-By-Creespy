@@ -328,6 +328,27 @@ export function BackgroundCanvas({
           }
         }
 
+        // 5. Spectrum — full-width wavy music bars (mirrored, bass-weighted)
+        if (currentFxType === "spectrum") {
+          const BARS = 72;
+          const bw = Math.max(1, w / BARS);
+          const cy = h * 0.5;
+          const ampScale = (0.45 + audioBeat.level * 0.55) * f;
+          const pump = 1 + audioBeat.pulse * 0.55 + audioBeat.downbeat * 0.3;
+          for (let i = 0; i < BARS; i++) {
+            const v = b.bars[Math.floor((i / BARS) * 48)] || 0;
+            const rise = Math.pow(v, 0.8) * h * 0.34 * ampScale * pump;
+            if (rise < 1) continue;
+            const sway = Math.sin(i * 0.22 + now * 0.0011) * bw * 0.18;
+            const x = i * bw + bw / 2 + sway;
+            const half = Math.max(1.5, bw * 0.48);
+            ctx.globalAlpha = Math.min(1, (0.2 + v * 0.66) * f);
+            ctx.fillStyle = i < BARS / 2 ? t.acc0 : t.acc1;
+            ctx.fillRect(x - half / 2, cy - rise, half, rise * 2);
+          }
+          ctx.globalAlpha = 1;
+        }
+
         ctx.globalCompositeOperation = "source-over";
       }
 

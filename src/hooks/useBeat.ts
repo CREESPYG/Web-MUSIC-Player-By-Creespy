@@ -23,8 +23,55 @@ class BeatEngine {
   lastReadTime = 0;
 
   // User sync calibration
-  tempoMult = 1; // 0.7 .. 1.3
+  tempoMult = 1; // 0.55 .. 1.45
   phaseSec = 0; // -0.25 .. +0.25 seconds of musical time shift
+
+  // Tap-to-lock: real BPM measured from user taps
+  private _tapDeltas: number[] = [];
+  private _lastTapAt = 0;
+  private tapPhaseShift = 0; // unbounded integer-beat alignment from tap-locking
+
+  /** Measure the song's REAL tempo by tapping along. Locks grid to the taps. */
+  tapBeat(): { bpm: number; tempoPct: number; phaseMs: number } {
+    const now = performance.now();
+    if (this._lastTapAt) {
+      const delta = (now - this._lastTapAt) / 1000;
+      if (delta > 0.12 && delta < 3) {
+        this._tapDeltas.push(60 / delta);
+        if (this._tapDeltas.length > 8) this._tapDeltas.shift();
+      }
+    }
+    this._lastTapAt = now;
+
+    let bpm = 0;
+    if (this._tapDeltas.length >= 2) {
+      const sorted = [...this._tapDeltas].sort((a, b) => a - b);
+      bpm = sorted[Math.floor(sorted.length / 2)]; // median of instant tempos
+    }
+
+    if (bpm >= 45 && bpm <= 200) {
+      // Faster/slower visual tempo ⇒ visual grid matches the true song tempo
+      this.tempoMult = Math.min(1.45, Math.max(0.55, bpm / this.bpm));
+
+      // Snap phase: make the CURRENT musical instant a whole beat, so the
+      // moment you tap a beat registers as an on-beat pulse from here on.
+      // Shift lives as an unbounded integer-beat offset (impervious to the
+      // ±0.25s UI phase clamp) and keeps the grid aligned for this session.
+      const currentSec = this.playing
+        ? this.trackTime + Math.max(0, (now - this.lastSyncMs) / 1000)
+        : now * 0.001;
+      const bps = (this.bpm / 60) * this.tempoMult;
+      const fracNow = (currentSec + this.phaseSec) * bps + this.seed * 0.05 + this.tapPhaseShift;
+      const rem = fracNow - Math.floor(fracNow);
+      this.tapPhaseShift -= rem;
+    }
+
+    return {
+      bpm: Math.round(bpm),
+      tempoPct: Math.round((this.tempoMult - 1) * 100),
+      phaseMs: Math.round(this.phaseSec * 1000),
+    };
+  }
 
   // Real-time audio beat telemetry
   level = 0;
@@ -70,7 +117,7 @@ class BeatEngine {
     this.lastSyncMs = now;
     this.bpm = bpm > 40 && bpm < 240 ? bpm : 96;
     this.seed = seed || 1;
-    this.tempoMult = Math.min(1.3, Math.max(0.7, tempo || 1));
+    this.tempoMult = Math.min(1.45, Math.max(0.55, tempo || 1));
     this.phaseSec = Math.min(0.25, Math.max(-0.25, phaseMs || 0) / 1000);
   }
 
@@ -85,7 +132,7 @@ class BeatEngine {
   setTrack(bpm: number, seed: number, tempo = this.tempoMult, phaseMs = this.phaseSec * 1000) {
     this.bpm = bpm > 40 && bpm < 240 ? bpm : 96;
     this.seed = seed || 1;
-    this.tempoMult = Math.min(1.3, Math.max(0.7, tempo || 1));
+    this.tempoMult = Math.min(1.45, Math.max(0.55, tempo || 1));
     this.phaseSec = Math.min(0.25, Math.max(-0.25, phaseMs || 0) / 1000);
     this.lastSyncMs = performance.now();
   }
@@ -119,7 +166,7 @@ class BeatEngine {
     // Apply user calibration to the musical time axis, then compute the beat grid
     const musicSec = currentSec + this.phaseSec;
     const beatsPerSec = (this.bpm / 60) * this.tempoMult;
-    const fractionalBeat = musicSec * beatsPerSec + (this.seed * 0.05);
+    const fractionalBeat = musicSec * beatsPerSec + (this.seed * 0.05) + this.tapPhaseShift;
     const beatIndex = Math.floor(fractionalBeat);
     const beatPhase = fractionalBeat - beatIndex; // 0.0 to 1.0 within beat
     this.beatPhase = beatPhase;

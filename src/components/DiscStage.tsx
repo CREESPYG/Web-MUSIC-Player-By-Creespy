@@ -37,6 +37,7 @@ export function DiscStage({
   buffered,
   liked,
   onLike,
+  theme,
   size = "lg",
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -59,10 +60,10 @@ export function DiscStage({
     baseThumb,
   ].filter((url, i, arr) => arr.indexOf(url) === i && url);
 
-  /* Precomputed unit angles for 48 visualizer bars — eliminates 96 Math.sin/cos calls per frame */
+  /* Precomputed unit angles for 72 visualizer bars — full circular rippling spectrum */
   const barAngles = useRef(
-    Array.from({ length: 48 }, (_, i) => {
-      const a = (i / 48) * Math.PI * 2 - Math.PI / 2;
+    Array.from({ length: 72 }, (_, i) => {
+      const a = (i / 72) * Math.PI * 2 - Math.PI / 2;
       return { cos: Math.cos(a), sin: Math.sin(a) };
     })
   ).current;
@@ -91,24 +92,49 @@ export function DiscStage({
     const N = barAngles.length;
 
     const drawFrame = (now: number, isResting = false) => {
-      const b = isResting ? { bars: [] as number[], level: 0 } : beat.read(now);
+      const b = isResting ? { bars: [] as number[], level: 0, downbeat: 0 } : beat.read(now);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, S, S);
       const cx = S / 2;
       const cy = S / 2;
       const r0 = S * 0.385;
 
+      // Beat-synced ring pulse that fires on the downbeat (kick of beat 1)
+      const db = isResting ? 0 : b.downbeat;
+      if (db > 0.02) {
+        ctx.globalAlpha = Math.min(0.55, db) * 0.75;
+        ctx.strokeStyle = theme.acc0;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r0 * (1 + db * 0.06), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
       ctx.lineCap = "round";
       ctx.lineWidth = 2;
       for (let i = 0; i < N; i++) {
         const v = isResting ? 0.05 : b.bars[Math.floor((i / N) * 48)] || 0;
+        // Wavy sway: bars ripple gently around the disc so the spectrum looks fluid
+        const sway = Math.sin(i * 0.35 + now * 0.0025) * 0.06;
+        const c0 = Math.cos(sway);
+        const s0 = Math.sin(sway);
         const { cos, sin } = barAngles[i];
-        const len = 3 + v * S * 0.06;
-        ctx.beginPath();
-        ctx.moveTo(cx + cos * r0, cy + sin * r0);
-        ctx.lineTo(cx + cos * (r0 + len), cy + sin * (r0 + len));
-        const alphaIdx = Math.min(32, Math.max(0, Math.round((0.1 + v * 0.45) * 32)));
+        const cxv = cos * c0 - sin * s0;
+        const cyv = cos * s0 + sin * c0;
+        const lenOut = 3 + v * S * 0.082;
+        const lenIn = 2 + v * S * 0.05;
+        const alphaIdx = Math.min(32, Math.max(0, Math.round((0.1 + v * 0.55) * 32)));
         ctx.strokeStyle = ALPHA_LOOKUP[alphaIdx];
+        // Outer bar — radiates outward from the ring
+        ctx.beginPath();
+        ctx.moveTo(cx + cxv * r0, cy + cyv * r0);
+        ctx.lineTo(cx + cxv * (r0 + lenOut), cy + cyv * (r0 + lenOut));
+        ctx.stroke();
+        // Inner mirrored bar — toward the vinyl, fuller spectrum reading
+        ctx.beginPath();
+        ctx.moveTo(cx - cxv * r0, cy - cyv * r0);
+        ctx.lineTo(cx - cxv * (r0 + lenIn), cy - cyv * (r0 + lenIn));
         ctx.stroke();
       }
     };

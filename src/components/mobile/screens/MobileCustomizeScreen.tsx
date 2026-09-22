@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { Settings, BgStyle, FxType } from "../../../hooks/useSettings";
 import { THEMES, type Theme } from "../../../themes";
+import { beat } from "../../../hooks/useBeat";
 import { AccentColorPicker } from "../../AccentColorPicker";
 import { Switch, UploadIcon, TrashIcon, CloseIcon, CheckIcon, PlayIcon, ImageIcon } from "../../UiIcons";
 import type { BgLibrary } from "../../../lib/bgStore";
@@ -30,6 +31,7 @@ const BG_STYLES: { id: BgStyle; label: string; desc: string }[] = [
 
 const FX_MODES: { id: FxType; label: string; desc: string }[] = [
   { id: "full", label: "Full", desc: "Orbs + Waves + Stars" },
+  { id: "spectrum", label: "Spectrum", desc: "Wavy Music Bars" },
   { id: "aurora", label: "Aurora", desc: "Northern Lights" },
   { id: "wave", label: "Wave", desc: "Sine Ribbons" },
   { id: "orbs", label: "Orbs", desc: "Cosmic Plasma" },
@@ -129,6 +131,15 @@ export function MobileCustomizeScreen({
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [urlDraft, setUrlDraft] = useState("");
+  const [tapBpm, setTapBpm] = useState<number | null>(null);
+  const onTapBeat = () => {
+    const r = beat.tapBeat();
+    setTapBpm(r.bpm || null);
+    if (r.bpm) {
+      update("beatTempo", r.tempoPct);
+      update("beatPhase", r.phaseMs);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -260,22 +271,35 @@ export function MobileCustomizeScreen({
         <SliderRow label="FX Intensity" value={settings.fxIntensity} min={0.2} max={1.8} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => update("fxIntensity", v)} />
         <SliderRow label="FX Speed" value={settings.fxSpeed} min={0.4} max={2.0} step={0.1} fmt={(v) => `${v.toFixed(1)}x`} onChange={(v) => update("fxSpeed", v)} />
 
-        <div className="mt-3 mb-1 flex items-center justify-between">
+        <div className="mt-3 mb-1 flex items-center justify-between gap-2">
           <span className="font-display text-[11px] font-bold text-[var(--ink)]">Beat sync (lock to the music)</span>
-          {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+          <div className="flex items-center gap-1.5">
+            {tapBpm ? <span className="font-tmono text-[9px] text-[var(--acc0)]">≈{tapBpm} BPM</span> : null}
             <button
               type="button"
-              onClick={() => {
-                update("beatTempo", 0);
-                update("beatPhase", 0);
-              }}
-              className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)]"
+              onClick={onTapBeat}
+              className="rounded-full border border-[var(--acc0)]/50 bg-[var(--acc0)]/10 px-2.5 py-0.5 font-tmono text-[9.5px] font-bold text-[var(--acc0)]"
             >
-              RESET
+              TAP ×4
             </button>
-          )}
+            {(settings.beatTempo !== 0 || settings.beatPhase !== 0) && (
+              <button
+                type="button"
+                onClick={() => {
+                  update("beatTempo", 0);
+                  update("beatPhase", 0);
+                }}
+                className="rounded-full border border-white/10 bg-white/4 px-2 py-0.5 font-tmono text-[9px] text-[var(--dim)]"
+              >
+                RESET
+              </button>
+            )}
+          </div>
         </div>
-        <SliderRow label="Beat Tempo" value={settings.beatTempo} min={-30} max={30} step={1} fmt={(v) => `${v > 0 ? "+" : ""}${v}%`} onChange={(v) => update("beatTempo", v)} />
+        <p className="mb-1.5 font-tmono text-[8.5px] leading-snug text-[var(--dim)]">
+          Gaane ke beat pe 4 baar tap karo — visuals asli tempo + downbeat pe lock.
+        </p>
+        <SliderRow label="Beat Tempo" value={settings.beatTempo} min={-45} max={45} step={1} fmt={(v) => `${v > 0 ? "+" : ""}${v}%`} onChange={(v) => update("beatTempo", v)} />
         <SliderRow label="Beat Phase" value={settings.beatPhase} min={-250} max={250} step={10} fmt={(v) => `${v > 0 ? "+" : ""}${v}ms`} onChange={(v) => update("beatPhase", v)} />
 
         <div className="divide-y divide-white/6">

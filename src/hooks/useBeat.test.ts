@@ -45,4 +45,30 @@ describe("BeatEngine calibration (beat sync)", () => {
     // 10s × (140/60) ≈ 23.38 → phase ≈ 0.38, clearly off the old grid point
     expect(beat.beatPhase).toBeGreaterThan(0.3);
   });
+
+  it("tap-to-lock measures the real song tempo from taps", async () => {
+    beat.sync(0, false, 96, 1, 1.0, 0);
+    const tap = async () => {
+      beat.tapBeat();
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    for (let i = 0; i < 5; i++) await tap(); // 300ms taps ⇒ 200bpm
+    const result = beat.tapBeat();
+    // clamp hits engine cap 1.45 → tempoPct should reflect the locked ratio
+    expect(result.bpm).toBeGreaterThanOrEqual(190);
+    expect(beat.tempoMult).toBeCloseTo(1.45, 2);
+  });
+
+  it("tap-to-lock snaps the phase so the tapped moment becomes an on-beat", async () => {
+    beat.sync(3.7, true, 100, 1, 1.0, 0);
+    beat.read(performance.now() + 4);
+    expect(beat.beatPhase).toBeGreaterThan(0.1); // off-grid before tapping
+
+    beat.tapBeat();
+    await new Promise((r) => setTimeout(r, 350));
+    const r = beat.tapBeat(); // second tap: tempo measured → grid snaps to the tap instant
+    expect(r.tempoPct).not.toBe(0); // ratio 1.71 → clamp engaged (not idle)
+    beat.read(performance.now() + 4);
+    expect(Math.abs(beat.beatPhase) < 0.1 || Math.abs(beat.beatPhase - 1) < 0.1).toBe(true);
+  });
 });

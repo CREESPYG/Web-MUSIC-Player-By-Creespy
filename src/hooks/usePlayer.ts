@@ -279,33 +279,47 @@ export function usePlayer(
 
     // Media Session: wire action handlers for lock-screen / notification controls
     if ("mediaSession" in navigator) {
-      navigator.mediaSession.setActionHandler("play", () => {
-        startedRef.current = true;
-        pRef.current?.playVideo?.();
-        playingRef.current = true;
-        setPlaying(true);
-        startKeepAlive();
-        requestWakeLock();
-      });
-      navigator.mediaSession.setActionHandler("pause", () => {
-        pRef.current?.pauseVideo?.();
-        playingRef.current = false;
-        setPlaying(false);
-        stopKeepAlive();
-        releaseWakeLock();
-      });
-      navigator.mediaSession.setActionHandler("previoustrack", () => {
-        cue(idxRef.current - 1, true);
-      });
-      navigator.mediaSession.setActionHandler("nexttrack", () => {
-        advance(false);
-      });
-      navigator.mediaSession.setActionHandler("seekto", (details: any) => {
-        if (details.seekTime != null) {
-          pRef.current?.seekTo?.(details.seekTime, true);
-          setTime(details.seekTime);
-        }
-      });
+      try {
+        navigator.mediaSession.setActionHandler("play", () => {
+          startedRef.current = true;
+          pRef.current?.playVideo?.();
+          playingRef.current = true;
+          setPlaying(true);
+          startKeepAlive();
+          requestWakeLock();
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+          pRef.current?.pauseVideo?.();
+          playingRef.current = false;
+          setPlaying(false);
+          stopKeepAlive();
+          releaseWakeLock();
+        });
+        navigator.mediaSession.setActionHandler("previoustrack", () => {
+          cue(idxRef.current - 1, true);
+        });
+        navigator.mediaSession.setActionHandler("nexttrack", () => {
+          advance(false);
+        });
+        navigator.mediaSession.setActionHandler("seekbackward", () => {
+          const t = pRef.current?.getCurrentTime?.() ?? 0;
+          pRef.current?.seekTo?.(Math.max(0, t - 10), true);
+          setTime(Math.max(0, t - 10));
+        });
+        navigator.mediaSession.setActionHandler("seekforward", () => {
+          const t = pRef.current?.getCurrentTime?.() ?? 0;
+          pRef.current?.seekTo?.(t + 10, true);
+          setTime(t + 10);
+        });
+        navigator.mediaSession.setActionHandler("seekto", (details: any) => {
+          if (details.seekTime != null) {
+            pRef.current?.seekTo?.(details.seekTime, true);
+            setTime(details.seekTime);
+          }
+        });
+      } catch {
+        /* some engines don't support every action */
+      }
     }
 
     let container: HTMLElement | null = null;
@@ -456,6 +470,8 @@ export function usePlayer(
           navigator.mediaSession.setActionHandler("pause", null);
           navigator.mediaSession.setActionHandler("previoustrack", null);
           navigator.mediaSession.setActionHandler("nexttrack", null);
+          navigator.mediaSession.setActionHandler("seekbackward", null);
+          navigator.mediaSession.setActionHandler("seekforward", null);
           navigator.mediaSession.setActionHandler("seekto", null);
         } catch {}
       }

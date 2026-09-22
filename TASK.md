@@ -176,12 +176,32 @@ Current gates (must stay green each phase):
       blended, >0.35s = real seek → clean re-anchor); long-term drift
       eliminated, grid stays steady
 - [x] "Beat sync" calibration (settings + CustomizePanel + mobile sliders):
-      Beat tempo ±30% (lock pulse rate to the song) & Beat phase ±250ms
+      Beat tempo ±45% (lock pulse rate to the song) & Beat phase ±250ms
       (land kicks on real downbeats), with RESET; persisted
 - [x] Crisper kick/snare envelopes (faster attack, cleaner decay) so locked
       pulses read clearly on the disk bars + all FX (orbs/aurora/wave)
 - [x] NEW src/hooks/useBeat.test.ts (3 tests): tempo timing, phase shift,
       bpm re-anchor; gates PASS 34/34 + typecheck + build
+
+### Fix Batch — Visual Accuracy + Media Keys  ✅ (user-reported round 2)
+- [x] TAP-TO-LOCK: `beat.tapBeat()` measures the song's REAL tempo from 4
+      taps (median instant-tempo, 45–200bpm) → visual grid + ALL FX + disc
+      bars lock to the true music tempo; phase snapped to the tapped beat as
+      an unbounded integer-beat shift (session-safe, survives re-sync);
+      TAP ×4 button + live "≈BPM" readout in desktop + mobile Customize
+- [x] Spectrum FX mode: NEW "Spectrum — Wavy Music Bars" full-screen
+      mirrored 72-bar spectrum (bass-weighted, per-column sine sway,
+      kick/downbeat pump) wired into desktop FX grid + mobile FX modes
+- [x] Disc stage bars upgraded: 48 → 72 bars, mirrored inner+outer
+      spectrum, per-bar wavy sway, plus a themed downbeat ring pulse that
+      fires on the kick of beat 1; still 30fps-throttled + resting-state
+- [x] HARDWARE MEDIA KEYS: MediaPlayPause / MediaTrackNext /
+      MediaTrackPrevious / MediaStop now handled as keydown fallback in
+      App (works even while typing + when the OS routes the key to the
+      YouTube iframe session); mediaSession gained seekbackward/seekforward
+      actions; all setActionHandler calls wrapped in try/catch (older
+      engines)
+- [x] Tests 36/36 PASS + typecheck PASS + build PASS
 
 ### Phase 29 — Final Regression   ← NEXT
 - [ ] 33-item checklist (search, playlists, all adapters, rooms, voice,

@@ -884,6 +884,31 @@ export default function App() {
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable;
+
+      // Hardware media/multimedia keys (laptop Fn-keys, keyboards, media buttons).
+      // These fire as normal keydown events and must work even while typing, and
+      // even when the platform routes the media key to the YouTube iframe session.
+      const media =
+        e.key === "MediaPlayPause" || e.code === "MediaPlayPause"
+          ? "toggle"
+          : e.key === "MediaTrackNext" || e.code === "MediaTrackNext"
+            ? "next"
+            : e.key === "MediaTrackPrevious" || e.code === "MediaTrackPrevious"
+              ? "prev"
+              : e.key === "MediaStop" || e.code === "MediaStop"
+                ? "stop"
+                : null;
+      if (media) {
+        e.preventDefault();
+        const p = playerRef.current;
+        if (!p) return;
+        if (media === "toggle") p.toggle();
+        else if (media === "next") p.next();
+        else if (media === "prev") p.prev();
+        else p.toggle();
+        return;
+      }
+
       if (e.key === "Escape") {
         setPanel(false);
         setRoomOpen(false);

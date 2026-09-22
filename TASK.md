@@ -157,11 +157,20 @@ Current gates (must stay green each phase):
 - [x] Gates: typecheck PASS · 31/31 tests PASS · build PASS
       (Total test count now 22→31)
 
-### Phase 28 — Full Browser Testing   ← NEXT
-- [ ] Chrome/Edge/Firefox/Brave desktop; Android Chrome; iOS Safari
-- [ ] Desktop↔Desktop, Desktop↔Mobile; same/different network, hotspot
-- [ ] Tab switch, refresh, network loss/reconnect, minimize/background
-- [ ] Breakpoints: 320/360/375/390/414/430/768
+### Phase 28 — Full Browser Testing  ✅ (code-verifiable) / ⬜ (device manual)
+- [x] Mobile meta: width=device-width + viewport-fit=cover; theme-color;
+      apple-web-app tags (index.html)
+- [x] Reduced motion honored (`motion-reduce:animate-none`,
+      `prefers-reduced-motion` matchMedia in MediaLayer/DiscStage/DigitFlipper)
+- [x] Browser-API feature guards everywhere (Notification, serviceWorker,
+      wakeLock, navigator.mediaDevices)
+- [x] No fixed/pixel widths that overflow 320px (all panels `max-w-[min(..,
+      100vw)]` / `w-full`; h-[100dvh] dynamic viewport for mobile URL bars)
+- [x] No stray `console.error` in src
+- [ ] MANUAL (on devices): Chrome/Edge/Firefox/Brave/Android Chrome/iOS
+      Safari; desktop↔desktop + desktop↔mobile on same/diff network/hotspot;
+      tab switch, refresh, network loss/reconnect, minimize/background;
+      breakpoint pass at 320/360/375/390/414/430/768
 
 ### Phase 29 — Final Regression
 - [ ] 33-item checklist (search, playlists, all adapters, rooms, voice,

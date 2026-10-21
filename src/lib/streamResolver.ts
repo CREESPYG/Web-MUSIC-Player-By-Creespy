@@ -29,7 +29,7 @@ function fresh<T extends { expireAt: number }>(hit: T | undefined): T | null {
 export async function resolveAudioStream(videoId: string): Promise<ResolvedAudioStream> {
   const hit = fresh(audioCache.get(videoId));
   if (hit) return hit;
-  const r = await fetch(`/.netlify/functions/innertube?id=${encodeURIComponent(videoId)}&kind=audio`);
+  const r = await fetch(`/api/innertube?id=${encodeURIComponent(videoId)}&kind=audio`);
   const j = await r.json().catch(() => null);
   if (!r.ok || !j?.ok || !j.url) throw new Error(j?.error || `stream resolve failed (${r.status})`);
   const info: ResolvedAudioStream = {
@@ -44,7 +44,7 @@ export async function resolveAudioStream(videoId: string): Promise<ResolvedAudio
 export async function resolveVideoStream(videoId: string): Promise<ResolvedVideoStream> {
   const hit = fresh(videoCache.get(videoId));
   if (hit) return hit;
-  const r = await fetch(`/.netlify/functions/innertube?id=${encodeURIComponent(videoId)}&kind=video`);
+  const r = await fetch(`/api/innertube?id=${encodeURIComponent(videoId)}&kind=video`);
   const j = await r.json().catch(() => null);
   if (!r.ok || !j?.ok || !j.url) throw new Error(j?.error || `video resolve failed (${r.status})`);
   const info: ResolvedVideoStream = {
@@ -92,7 +92,7 @@ export async function searchRemote(query: string, limit = 10): Promise<RemoteSea
   const to = window.setTimeout(() => ctrl.abort(), 5000);
   try {
     const r = await fetch(
-      `/.netlify/functions/innertube?kind=search&q=${encodeURIComponent(query)}&limit=${limit}`,
+      `/api/innertube?kind=search&q=${encodeURIComponent(query)}&limit=${limit}`,
       { signal: ctrl.signal }
     );
     const j = await r.json().catch(() => null);

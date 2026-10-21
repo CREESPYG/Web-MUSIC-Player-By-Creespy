@@ -12,6 +12,13 @@
   to = "https://open.spotify.com/embed/:splat"
   status = 200
 
+# Unified Innertube resolver — the client always calls /api/innertube
+# (Vercel serves api/innertube.ts natively); on Netlify rewrite it to the function.
+[[redirects]]
+  from = "/api/innertube"
+  to = "/.netlify/functions/innertube"
+  status = 200
+
 # Admin control plane — serverless API (must precede the SPA catch-all)
 [[redirects]]
   from = "/api/admin/*"

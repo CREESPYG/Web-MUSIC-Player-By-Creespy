@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/.netlify/functions/innertube", "destination": "/api/innertube" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

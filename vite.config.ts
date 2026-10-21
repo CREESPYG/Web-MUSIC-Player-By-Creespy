@@ -101,7 +101,9 @@ function innertubeDev(): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req: Connect.IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
         const url = new URL(req.url ?? "/", "http://localhost");
-        if (url.pathname !== "/.netlify/functions/innertube") return next();
+        // Unified client path is /api/innertube (Vercel-native); the legacy
+        // /.netlify/functions/innertube path is kept working during dev too.
+        if (url.pathname !== "/api/innertube" && url.pathname !== "/.netlify/functions/innertube") return next();
         try {
           const kind = url.searchParams.get("kind");
           if (kind === "search") {

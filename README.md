@@ -85,11 +85,17 @@ A single-file React music player that plays YouTube through a server-resolved **
 
 Playback and search go through one same-origin serverless endpoint — **no YouTube API key, no CORS issues**:
 
-- `/.netlify/functions/innertube?kind=audio&id=<videoId>` → audio stream URL + expiry + duration
-- `/.netlify/functions/innertube?kind=video&id=<videoId>` → video stream URL (live wallpaper)
-- `/.netlify/functions/innertube?kind=search&q=<query>&limit=10` → keyword results (songs + playlists)
+- `/api/innertube?kind=audio&id=<videoId>` → audio stream URL + expiry + duration
+- `/api/innertube?kind=video&id=<videoId>` → video stream URL (live wallpaper)
+- `/api/innertube?kind=search&q=<query>&limit=10` → keyword results (songs + playlists)
 
-Client side (`src/lib/streamResolver.ts`) caches URLs until ~1 minute before expiry and invalidates on mid-play failure; the player then falls back to the IFrame engine. `vite.config.ts` mounts the exact same resolver/search as dev middleware, so `npm run dev` plays music with no extra process.
+Client side (`src/lib/streamResolver.ts`) caches URLs until ~1 minute before expiry and invalidates on mid-play failure; the player then falls back to the IFrame engine. The client always calls **`/api/innertube`**, which every host maps onto the same implementation:
+
+- **Vercel** → `api/innertube.ts` (native function, wraps the shared dispatcher)
+- **Netlify** → `netlify.toml` rewrites `/api/innertube` → `/.netlify/functions/innertube`
+- **localhost** → `vite.config.ts` dev middleware runs the same resolve/search logic
+
+`vite.config.ts` mounts the exact same resolver/search as dev middleware, so `npm run dev` plays music with no extra process.
 
 ## Environment variables
 
@@ -122,11 +128,21 @@ First deploy flow: run `supabase/admin_schema.sql` in the SQL editor → set the
   - `/api/jiosaavn/*` → `https://www.jiosaavn.com/*` (host header rewritten by Netlify)
   - `/api/spotify-embed/*` → `https://open.spotify.com/embed/*`
   - `/api/admin/*` → `.netlify/functions/admin` (admin control-plane API)
+  - `/api/innertube` → `/.netlify/functions/innertube` (unified resolver path, maps to the function)
   - `/*` → `/index.html` SPA fallback (proxies are matched first, so they are unaffected)
-- The Innertube resolver ships as `netlify/functions/innertube.ts` and is served automatically at `/.netlify/functions/innertube` — no redirect needed.
+- The Innertube dispatcher ships as `netlify/functions/innertube.ts` and is served automatically at `/.netlify/functions/innertube`; the client's unified `/api/innertube` path is rewritten there.
 - Admin API responses are sent with `no-store` + nosniff/DENY headers; the admin page is never cached.
 
 Order matters: the api proxy rules live before the SPA catch-all. If you add a new proxied provider, add its rule above the `/*` catch-all.
+
+## Deployment (Vercel)
+
+Import the GitHub repo in Vercel — no config needed beyond `vercel.json` (already committed):
+
+- Build: `vite build` (auto-detected), output `dist/` (single-file `index.html`).
+- `api/innertube.ts` is served natively at `/api/innertube` — YouTube search, stream resolution and the live wallpaper work out of the box (keyless, no env vars).
+- `vercel.json` rewrites `/.netlify/functions/innertube` → `/api/innertube` (legacy path) and everything outside `/api/*` → `/index.html` (SPA fallback, same as Netlify's `/*` rule).
+- **Note:** the admin control plane (`/creespy/admin` + `/api/admin/*`) is **Netlify-only** — the admin functions do not exist under `api/`, so on Vercel the admin island loads but cannot authenticate. The player site itself is unaffected.
 
 ## Android build (Capacitor)
 

@@ -1,7 +1,10 @@
 /**
- * Stream resolver function — the web app fetches /.netlify/functions/innertube
- * (same-origin, no CORS) to resolve YouTube audio/video stream URLs server-side,
- * the way musike resolves them through its Fastify backend.
+ * Stream resolver dispatcher (web-standard Request → Response) — the single
+ * implementation every host maps onto the unified client path /api/innertube:
+ *   Netlify  → /.netlify/functions/innertube (this file, via netlify.toml rewrite)
+ *   Vercel   → api/innertube.ts adapter wraps this file
+ *   localhost→ vite.config.ts dev middleware runs the same resolve/search logic
+ * Resolves YouTube audio/video stream URLs server-side (same-origin, no CORS);
  * `kind=search` performs a YouTube keyword search (Search screen) the same way.
  */
 import { resolveInnertube, type InnertubeResult } from "../innertube/resolve";

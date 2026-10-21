@@ -740,16 +740,17 @@ export default function App() {
     }
   }, [room.inRoom, room.canDrive, room.pushPlayback]);
 
-  // Invite link: useRoom auto-joins the code — land on the FULL Rooms screen,
-  // never the side overlay panel.
+  // Invite link & refresh: useRoom auto-joins or restores the room — land on the FULL Rooms screen
   useEffect(() => {
-    if (readInviteCode()) {
+    const invite = readInviteCode();
+    if (invite) {
       setRoomOpen(false);
       changeScreen("rooms");
       requestMobileTab("room");
+    } else if (screen === "rooms") {
+      requestMobileTab("room");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [screen, changeScreen]);
 
   const controlsLocked = room.inRoom && !room.canDrive;
   // Host should never have their own controls restricted by room permissions

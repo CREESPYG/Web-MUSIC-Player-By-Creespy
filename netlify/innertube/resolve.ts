@@ -75,7 +75,7 @@ export async function resolveInnertube(videoId: string, kind: "audio" | "video")
         "user-agent": ANDROID_UA,
         // Public Android-client API key embedded in every YouTube Android APK;
         // YouTube enforces it from datacenter/serverless IPs (e.g. Vercel),
-        // where omitting it yields playability LOGIN_REQUIRED.
+        "x-goog-api-key": "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
         authorization: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
         "x-youtube-client-name": "3",
         "x-youtube-client-version": "20.10.38",

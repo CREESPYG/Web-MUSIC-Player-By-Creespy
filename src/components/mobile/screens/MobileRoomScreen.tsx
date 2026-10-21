@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RoomApi } from "../../../hooks/useRoom";
-import type { Permissions } from "../../../lib/room";
+import { type Permissions, inviteLink } from "../../../lib/room";
 import { Switch, CopyIcon, HeadphonesIcon, CrownIcon, GlobeIcon, LockIcon, SettingsIcon, ChatIcon, GroupIcon, SendIcon, ShieldIcon } from "../../UiIcons";
 
 interface Props {
@@ -49,8 +49,20 @@ export function MobileRoomScreen({ room, onToast }: Props) {
   const copyInvite = () => {
     const code = room.room?.code;
     if (!code) return;
-    const url = `${window.location.origin}/?room=${code}`;
-    navigator.clipboard?.writeText(url).then(() => onToast("Invite link copied!")).catch(() => onToast("Copy failed"));
+    const url = inviteLink(code);
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator
+        .share({
+          title: `Join my room: ${code}`,
+          text: `Listen along with me on CREEP CREEP in room ${code}!`,
+          url,
+        })
+        .catch(() => {
+          navigator.clipboard?.writeText(url).then(() => onToast("Invite link copied!")).catch(() => onToast("Copy failed"));
+        });
+    } else {
+      navigator.clipboard?.writeText(url).then(() => onToast("Invite link copied!")).catch(() => onToast("Copy failed"));
+    }
   };
 
   const handleSendChat = (text?: string) => {

@@ -221,16 +221,35 @@ export interface PublicRoomEntry {
 }
 
 export function inviteLink(code: string): string {
-  const base = typeof location !== "undefined" ? `${location.origin}${location.pathname}` : "";
-  return `${base}#room=${code.toUpperCase()}`;
+  const cleanCode = code.toUpperCase();
+  const origin = typeof location !== "undefined" && location.origin ? location.origin : "https://creespy.netlify.app";
+  return `${origin}/?room=${cleanCode}#room=${cleanCode}`;
 }
 
 export function readInviteCode(): string | null {
   if (typeof location === "undefined") return null;
-  const hashMatch = location.hash.match(/room=([A-Za-z0-9]{4,8})/);
+
+  // 1. Search Query Params (?room=ABCD, ?code=ABCD, ?join=ABCD)
+  try {
+    const params = new URLSearchParams(location.search);
+    const qRoom = params.get("room") || params.get("code") || params.get("join");
+    if (qRoom && /^[A-Za-z0-9]{4,8}$/.test(qRoom.trim())) {
+      return qRoom.trim().toUpperCase();
+    }
+  } catch {
+    /* fallback to regex */
+  }
+  const searchMatch = location.search.match(/[?&](?:room|code|join)=([A-Za-z0-9]{4,8})(?:&|$)/i);
+  if (searchMatch) return searchMatch[1].toUpperCase();
+
+  // 2. Hash (#room=ABCD, #/room/ABCD, #ABCD)
+  const hashMatch = location.hash.match(/(?:room=|room\/|^#)([A-Za-z0-9]{4,8})(?:&|$)/i);
   if (hashMatch) return hashMatch[1].toUpperCase();
-  const pathMatch = location.pathname.match(/\/room\/([A-Za-z0-9]{4,8})/i);
+
+  // 3. Path (/room/ABCD, /rooms/ABCD)
+  const pathMatch = location.pathname.match(/\/(?:rooms?)\/([A-Za-z0-9]{4,8})/i);
   if (pathMatch) return pathMatch[1].toUpperCase();
+
   return null;
 }
 

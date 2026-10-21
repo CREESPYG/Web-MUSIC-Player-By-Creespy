@@ -355,6 +355,20 @@ export function RoomPanel({ open, onClose, room, onToast, inline = false }: { op
                 </div>
               )}
 
+              {/* ---------------- CONNECTING / SYNCING TO ROOM ---------------- */}
+              {inRoom && !room.room && (
+                <div className="flex flex-1 flex-col items-center justify-center gap-4 py-16 text-center">
+                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-[var(--acc0)]" />
+                  <div>
+                    <p className="font-display text-base font-bold text-[var(--ink)]">Connecting to room…</p>
+                    <p className="mt-1.5 text-[12.5px] text-[var(--dim)]">Synchronizing room state and listeners</p>
+                  </div>
+                  <button onClick={room.leave} className="mt-2 rounded-full border border-white/12 px-4 py-2 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)] hover:text-white">
+                    Return to lobby
+                  </button>
+                </div>
+              )}
+
               {/* ---------------- IN ROOM ---------------- */}
               {inRoom && room.room && (
                 <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -378,7 +392,23 @@ export function RoomPanel({ open, onClose, room, onToast, inline = false }: { op
                       <button onClick={() => copy(room.room!.code, "Code")} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-white/12 py-2 font-tmono text-[9px] uppercase tracking-[0.12em] text-[var(--dim)] hover:text-[var(--acc0)]">
                         <CopyIcon size={12} /> code
                       </button>
-                      <button onClick={() => copy(inviteLink(room.room!.code), "Invite link")} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-white/12 py-2 font-tmono text-[9px] uppercase tracking-[0.12em] text-[var(--dim)] hover:text-[var(--acc0)]">
+                      <button
+                        onClick={() => {
+                          const url = inviteLink(room.room!.code);
+                          if (typeof navigator !== "undefined" && navigator.share) {
+                            navigator
+                              .share({
+                                title: `Join my room: ${room.room!.code}`,
+                                text: `Listen along with me on CREEP CREEP in room ${room.room!.code}!`,
+                                url,
+                              })
+                              .catch(() => copy(url, "Invite link"));
+                          } else {
+                            copy(url, "Invite link");
+                          }
+                        }}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-white/12 py-2 font-tmono text-[9px] uppercase tracking-[0.12em] text-[var(--dim)] hover:text-[var(--acc0)]"
+                      >
                         <CopyIcon size={12} /> link
                       </button>
                     </div>

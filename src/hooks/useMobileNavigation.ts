@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readInviteCode } from "../lib/room";
 
 export type MobileTab =
   | "player"
@@ -20,7 +21,19 @@ export interface MobileNavigationApi {
 }
 
 export function useMobileNavigation(isMobile: boolean): MobileNavigationApi {
-  const [activeTab, setActiveTabState] = useState<MobileTab>("player");
+  const [activeTab, setActiveTabState] = useState<MobileTab>(() => {
+    if (typeof window !== "undefined") {
+      const invite = readInviteCode();
+      if (invite) return "room";
+      try {
+        const savedTab = sessionStorage.getItem("creespy.mobile_tab") as MobileTab;
+        if (savedTab && ["player", "playlist", "room", "queue", "clock", "customization"].includes(savedTab)) {
+          return savedTab;
+        }
+      } catch {}
+    }
+    return "player";
+  });
   const [moreOpen, setMoreOpen] = useState(false);
   const [showExitModal, setShowExitModal] = useState(false);
 
@@ -35,6 +48,9 @@ export function useMobileNavigation(isMobile: boolean): MobileNavigationApi {
   const setActiveTab = useCallback((tab: MobileTab) => {
     setActiveTabState(tab);
     setMoreOpen(false);
+    try {
+      sessionStorage.setItem("creespy.mobile_tab", tab);
+    } catch {}
   }, []);
 
   /* ---------------- PopState Hardware / Gesture Back Guard ---------------- */

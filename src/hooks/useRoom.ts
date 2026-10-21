@@ -15,6 +15,8 @@ import {
   userId,
   getTabSessionId,
   clearRoomSession,
+  saveRoomSession,
+  loadRoomSession,
   readInviteCode,
   type ChatMsg,
   type ConnState,
@@ -1168,6 +1170,15 @@ export function useRoom(handlers: RoomHandlers) {
       setupHostLobby(code, info);
       bindRoomChannel(code, "host", info);
 
+      saveRoomSession({
+        roomCode: code,
+        roomName: info.name,
+        role: "host",
+        userId: me.current,
+        sessionId: tabSessionId.current,
+        joinedAt: Date.now(),
+      });
+
       if (info.type === "public") {
         announceDirectory({
           code: info.code,
@@ -1260,6 +1271,14 @@ export function useRoom(handlers: RoomHandlers) {
               if (m.permissions) setPermissions(m.permissions);
               setStatus("member");
               bindRoomChannel(clean, "member", info);
+              saveRoomSession({
+                roomCode: clean,
+                roomName: info.name,
+                role: "member",
+                userId: me.current,
+                sessionId: tabSessionId.current,
+                joinedAt: Date.now(),
+              });
             }
             return true;
           }
@@ -1287,6 +1306,14 @@ export function useRoom(handlers: RoomHandlers) {
           if (payload.permissions) setPermissions(payload.permissions);
           setStatus("member");
           bindRoomChannel(clean, "member", info);
+          saveRoomSession({
+            roomCode: clean,
+            roomName: info.name,
+            role: "member",
+            userId: me.current,
+            sessionId: tabSessionId.current,
+            joinedAt: Date.now(),
+          });
         } else {
           clearRoomSession();
           setStatus("denied");
@@ -1315,16 +1342,15 @@ export function useRoom(handlers: RoomHandlers) {
               );
             });
           }
-          if (!isRecovery) {
-            joinTimersRef.current.push(
-              window.setTimeout(() => {
-                if (!resolved && !ackd && (statusRef.current === "waiting" || statusRef.current === "requesting")) {
-                  setStatus("error");
-                  teardown();
-                }
-              }, 18000)
-            );
-          }
+          joinTimersRef.current.push(
+            window.setTimeout(() => {
+              if (!resolved && !ackd && (statusRef.current === "waiting" || statusRef.current === "requesting")) {
+                clearRoomSession();
+                setStatus("error");
+                teardown();
+              }
+            }, 12000)
+          );
         } else if (s === "CHANNEL_ERROR" || s === "TIMED_OUT") {
           setConnection("reconnecting");
         }
@@ -1857,7 +1883,6 @@ export function useRoom(handlers: RoomHandlers) {
         }).catch(() => {});
       }
       chanRef.current?.untrack().catch(() => {});
-      clearRoomSession();
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -1866,18 +1891,49 @@ export function useRoom(handlers: RoomHandlers) {
     };
   }, [announceDirectory, nickname]);
 
-  // Initial Mount: Land on main room lobby page
+  // Initial Mount: Restore active room session if page was refreshed, or join invite code
   useEffect(() => {
     if (isRecoveringRef.current) return;
     isRecoveringRef.current = true;
 
-    clearRoomSession();
-
     const invite = readInviteCode();
+    const session = loadRoomSession();
+
     if (invite) {
       joinRoom(invite, savedNickname() || "Guest", false);
+    } else if (session && session.roomCode && Date.now() - session.joinedAt < 6 * 3600 * 1000) {
+      if (session.role === "host") {
+        const nick = savedNickname() || "Host";
+        const info: RoomInfo = {
+          code: session.roomCode,
+          name: session.roomName || `${nick}'s Room`,
+          type: "public",
+          requireApproval: false,
+          hostId: me.current,
+          hostName: nick,
+          chatEnabled: true,
+          voiceEnabled: true,
+        };
+        setRoom(info);
+        roomRef.current = info;
+        setStatus("hosting");
+        setupHostLobby(session.roomCode, info);
+        bindRoomChannel(session.roomCode, "host", info);
+        announceDirectory({
+          code: info.code,
+          name: info.name,
+          hostName: info.hostName,
+          count: 1,
+          requireApproval: info.requireApproval,
+          at: Date.now(),
+        });
+      } else {
+        joinRoom(session.roomCode, savedNickname() || "Guest", true);
+      }
+    } else {
+      clearRoomSession();
     }
-  }, [joinRoom]);
+  }, [announceDirectory, bindRoomChannel, joinRoom, setupHostLobby]);
 
   /* ---------- derived ---------- */
   const inRoom = status === "hosting" || status === "member";

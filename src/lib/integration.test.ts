@@ -159,6 +159,16 @@ describe("Phase 27 integration · room channel identity", () => {
     (globalThis as any).location = { search: "", hash: "#room=DEF34", pathname: "/", href: url };
     (globalThis as any).window = { location: (globalThis as any).location };
     expect(readInviteCode()).toBe("DEF34");
+
+    // Search Query params (?room=XYZ or ?code=XYZ)
+    (globalThis as any).location = { search: "?room=XYZ78", hash: "", pathname: "/" };
+    expect(readInviteCode()).toBe("XYZ78");
+    (globalThis as any).location = { search: "?code=K9J21", hash: "", pathname: "/" };
+    expect(readInviteCode()).toBe("K9J21");
+
+    // Path params (/room/XYZ or /rooms/XYZ)
+    (globalThis as any).location = { search: "", hash: "", pathname: "/room/ROOM12" };
+    expect(readInviteCode()).toBe("ROOM12");
   });
 
   it("userId is browser-level (persists across 'tabs' in shared storage)", () => {

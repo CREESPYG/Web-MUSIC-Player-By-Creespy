@@ -53,6 +53,8 @@ export async function resolveInnertube(videoId: string, kind: "audio" | "video")
 
   const body = JSON.stringify({
     videoId,
+    contentCheckOk: true,
+    racyCheckOk: true,
     context: {
       client: {
         clientName: "ANDROID",
@@ -68,7 +70,16 @@ export async function resolveInnertube(videoId: string, kind: "audio" | "video")
   try {
     const r = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
       method: "POST",
-      headers: { "content-type": "application/json", "user-agent": ANDROID_UA },
+      headers: {
+        "content-type": "application/json",
+        "user-agent": ANDROID_UA,
+        // Public Android-client API key embedded in every YouTube Android APK;
+        // YouTube enforces it from datacenter/serverless IPs (e.g. Vercel),
+        // where omitting it yields playability LOGIN_REQUIRED.
+        authorization: "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+        "x-youtube-client-name": "3",
+        "x-youtube-client-version": "20.10.38",
+      },
       body,
     });
     if (!r.ok) return { ok: false, error: `upstream ${r.status}`, status: 502 };

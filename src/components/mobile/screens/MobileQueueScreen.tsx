@@ -12,6 +12,8 @@ interface Props {
   onFindSimilar: () => void;
   similarBusy: boolean;
   onToast: (msg: string) => void;
+  /** Clear the queue but keep the currently loaded track playing. */
+  onClearQueue?: () => void;
 }
 
 export function MobileQueueScreen({
@@ -23,6 +25,7 @@ export function MobileQueueScreen({
   onFindSimilar,
   similarBusy,
   onToast,
+  onClearQueue,
 }: Props) {
   const [urlDraft, setUrlDraft] = useState("");
 
@@ -55,21 +58,34 @@ export function MobileQueueScreen({
         </button>
       </form>
 
-      {/* 2. Queue Status & Auto Top-Up Button */}
-      <div className="mb-3 flex items-center justify-between rounded-xl border border-white/8 bg-white/[0.02] px-3.5 py-2">
+      {/* 2. Queue Status & Actions */}
+      <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/[0.02] px-3.5 py-2">
         <span className="font-tmono text-[10px] uppercase tracking-wider text-[var(--dim)]">
           Total Queue: <strong className="text-white">{tracks.length}</strong> tracks
         </span>
 
-        <button
-          type="button"
-          onClick={onFindSimilar}
-          disabled={similarBusy}
-          className="flex items-center gap-1 rounded-lg border border-[var(--acc0)]/30 bg-[var(--acc0)]/10 px-2.5 py-1 font-display text-[10px] font-bold text-[var(--acc0)] transition-transform active:scale-95 disabled:opacity-50"
-        >
-          <SparkIcon size={12} />
-          <span>{similarBusy ? "Finding…" : "Find Similar"}</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onClearQueue && tracks.length > 1 && (
+            <button
+              type="button"
+              onClick={onClearQueue}
+              className="flex items-center gap-1 rounded-lg border border-white/12 bg-white/3 px-2.5 py-1 font-display text-[10px] font-bold text-[var(--dim)] transition-transform active:scale-95"
+              title="Clear queue — keeps the current track"
+            >
+              <TrashIcon size={12} />
+              <span>Clear</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onFindSimilar}
+            disabled={similarBusy}
+            className="flex items-center gap-1 rounded-lg border border-[var(--acc0)]/30 bg-[var(--acc0)]/10 px-2.5 py-1 font-display text-[10px] font-bold text-[var(--acc0)] transition-transform active:scale-95 disabled:opacity-50"
+          >
+            <SparkIcon size={12} />
+            <span>{similarBusy ? "Finding…" : "Find Similar"}</span>
+          </button>
+        </div>
       </div>
 
       {/* 3. Reorderable Track List */}

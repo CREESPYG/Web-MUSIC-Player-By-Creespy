@@ -8,6 +8,8 @@ import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { handleRequest, type RouteRequest } from "./netlify/admin/router";
 import { MemoryAdminDb, devSeed } from "./netlify/admin/memory-db";
+import { resolveInnertube } from "./netlify/innertube/resolve";
+import { searchInnertube } from "./netlify/innertube/search";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,9 +91,49 @@ function readBody(req: Connect.IncomingMessage): Promise<string> {
   });
 }
 
+/**
+ * Local dev stream resolver — same Innertube resolution the Netlify function
+ * runs in production, so `npm run dev` plays music with no extra process.
+ */
+function innertubeDev(): Plugin {
+  return {
+    name: "innertube-dev",
+    configureServer(server) {
+      server.middlewares.use(async (req: Connect.IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+        const url = new URL(req.url ?? "/", "http://localhost");
+        if (url.pathname !== "/.netlify/functions/innertube") return next();
+        try {
+          const kind = url.searchParams.get("kind");
+          if (kind === "search") {
+            const q = url.searchParams.get("q") ?? "";
+            const limit = Number(url.searchParams.get("limit")) || 10;
+            const search = await searchInnertube(q, limit);
+            res.statusCode = search.ok ? 200 : search.status;
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify(search));
+            return;
+          }
+          const id = url.searchParams.get("id") ?? "";
+          const mediaKind = url.searchParams.get("kind") === "video" ? ("video" as const) : ("audio" as const);
+          const result = await resolveInnertube(id, mediaKind);
+          res.statusCode = result.ok ? 200 : result.status;
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(JSON.stringify(result));
+        } catch {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: false, error: "dev resolver crashed", status: 500 }));
+        }
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), creespyAdminDev(), viteSingleFile()],
+  plugins: [react(), tailwindcss(), creespyAdminDev(), innertubeDev(), viteSingleFile()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

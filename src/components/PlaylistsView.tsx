@@ -30,6 +30,7 @@ import {
   HeartIcon,
   GlobeIcon,
   LockIcon,
+  PinIcon,
 } from "./UiIcons";
 
 /** Dedup identity that survives unresolved tracks (which have no videoId yet). */
@@ -57,6 +58,10 @@ interface PlaylistsViewProps {
   onPlayEntirePlaylist: (tracks: Track[]) => void;
   onAddPlaylistToQueue: (tracks: Track[]) => void;
   onToast: (msg: string) => void;
+  /** Playlist list layout: "grid" = tile cards, "box" = compact rows (default). */
+  viewMode?: "grid" | "box";
+  /** External "open this playlist" request (from the Search section). */
+  openPlaylistId?: string | null;
 }
 
 export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
@@ -65,6 +70,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
   onPlayEntirePlaylist,
   onAddPlaylistToQueue,
   onToast,
+  viewMode = "box",
+  openPlaylistId,
 }) => {
   const [playlists, setPlaylists] = useState<CustomPlaylist[]>(() => persistence.getPlaylists());
   const [globalPublicPlaylists, setGlobalPublicPlaylists] = useState<CustomPlaylist[]>([]);
@@ -118,6 +125,17 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     };
   }, []);
 
+  // Search section requested a specific playlist — select it and pick the right tab.
+  useEffect(() => {
+    if (!openPlaylistId) return;
+    setSelectedPlaylistId(openPlaylistId);
+    const localPl = playlists.find((p) => p.id === openPlaylistId);
+    if (openPlaylistId === "__liked_songs__") setActiveTab("liked");
+    else if (localPl && !localPl.isPublic) setActiveTab("private");
+    else setActiveTab("global");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPlaylistId, playlists]);
+
   // Global playlist like counts (synced with localStorage)
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>(() => {
     const counts: Record<string, number> = {};
@@ -140,6 +158,22 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       onToast("Removed from liked playlists");
     }
     setLikeCounts((prev) => ({ ...prev, [playlistId]: newCount }));
+  };
+
+  // Global playlists pinned into the Collection section
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(
+    () => new Set(persistence.getPinnedGlobalPlaylists().map((p) => p.id))
+  );
+
+  const handleTogglePinGlobalPlaylist = (pl: CustomPlaylist) => {
+    const nowPinned = persistence.togglePinGlobalPlaylist(pl);
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (nowPinned) next.add(pl.id);
+      else next.delete(pl.id);
+      return next;
+    });
+    onToast(nowPinned ? `Pinned “${pl.title}” to Collection` : `Unpinned “${pl.title}” from Collection`);
   };
 
   // Load global public playlists and subscribe to realtime changes
@@ -628,11 +662,21 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       </div>
 
       {/* Main Grid: Left Playlists + Right Tracklist */}
-      <div className="grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-4 min-h-0 flex-1">
+      <div
+        className={`grid grid-cols-1 gap-4 min-h-0 flex-1 ${
+          viewMode === "grid" ? "lg:grid-cols-[minmax(300px,420px)_1fr]" : "lg:grid-cols-[290px_1fr]"
+        }`}
+      >
         {/* Left: Playlists List */}
         <div className="space-y-2">
           {/* Playlists Cards */}
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+          <div
+            className={
+              viewMode === "grid"
+                ? "grid grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1"
+                : "space-y-2 max-h-[60vh] overflow-y-auto pr-1"
+            }
+          >
             {activeTab === "global" && globalLoading && (
               <div className="flex items-center justify-center py-8 text-[var(--dim)]">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-[var(--acc0)]" />
@@ -678,6 +722,101 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                 const isGlobalLiked = isGlobal && hasUserLikedGlobalPlaylist(pl.id);
                 const globalLikeCount = isGlobal ? (likeCounts[pl.id] || getGlobalPlaylistLikeCount(pl.id)) : 0;
                 const firstCover = pl.cover || pl.tracks[0]?.thumb || pl.tracks[0]?.coverUrl || "/cover-placeholder.jpg";
+
+                if (viewMode === "grid") {
+                  return (
+                    <button
+                      key={pl.id}
+                      onClick={() => setSelectedPlaylistId(pl.id)}
+                      className={`group relative flex flex-col overflow-hidden rounded-xl border text-left transition-all ${
+                        isSelected
+                          ? "border-[var(--acc0)] bg-[var(--acc0)]/10 shadow-md"
+                          : "border-white/5 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.06]"
+                      }`}
+                    >
+                      <div
+                        className="relative aspect-square w-full overflow-hidden bg-black/40"
+                        style={
+                          isLiked
+                            ? {
+                                background:
+                                  "linear-gradient(135deg, color-mix(in srgb, var(--acc0) 40%, transparent), color-mix(in srgb, var(--acc2) 50%, transparent))",
+                              }
+                            : undefined
+                        }
+                      >
+                        {pl.tracks.length > 0 || pl.cover ? (
+                          <img
+                            src={firstCover}
+                            alt=""
+                            className="h-full w-full object-cover object-center"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = "/cover-placeholder.jpg";
+                            }}
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[var(--dim)]">
+                            {isLiked ? <HeartIcon size={22} className="text-white fill-current" /> : <DiscIcon size={22} />}
+                          </div>
+                        )}
+                        {isGlobal && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleGlobalPlaylistLike(pl.id);
+                            }}
+                            className={`absolute bottom-1.5 right-1.5 rounded-lg p-1.5 backdrop-blur-sm transition-colors ${
+                              isGlobalLiked ? "bg-black/60 text-[var(--acc0)]" : "bg-black/50 text-white/80 hover:text-[var(--acc0)]"
+                            }`}
+                            title={isGlobalLiked ? "Unlike playlist" : "Like playlist"}
+                          >
+                            <HeartIcon size={13} className={isGlobalLiked ? "fill-current" : ""} />
+                          </button>
+                        )}
+                        {isGlobal && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleTogglePinGlobalPlaylist(pl);
+                            }}
+                            className={`absolute bottom-1.5 left-1.5 rounded-lg p-1.5 backdrop-blur-sm transition-colors ${
+                              pinnedIds.has(pl.id)
+                                ? "bg-black/65 text-[var(--acc0)]"
+                                : "bg-black/50 text-white/70 hover:text-[var(--acc0)]"
+                            }`}
+                            title={pinnedIds.has(pl.id) ? "Unpin from Collection" : "Pin to Collection"}
+                          >
+                            <PinIcon size={13} className={pinnedIds.has(pl.id) ? "fill-current" : ""} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 px-2 pt-1.5">
+                        <span className="truncate text-[11.5px] font-semibold text-white">{pl.title}</span>
+                        {isLiked ? (
+                          <span title="Liked Songs" className="shrink-0 text-[var(--acc0)]">
+                            <HeartIcon size={10} className="fill-current" />
+                          </span>
+                        ) : isGlobal ? (
+                          <span title="Global" className="shrink-0 text-emerald-400">
+                            <GlobeIcon size={11} />
+                          </span>
+                        ) : (
+                          <span title="Private" className="shrink-0 text-[var(--dim)]">
+                            <LockIcon size={10} />
+                          </span>
+                        )}
+                      </div>
+                      <p className="truncate px-2 pb-1.5 pt-0.5 text-[9.5px] text-[var(--dim)]">
+                        {pl.tracks.length} songs {!isLiked && `• ${pl.author}`}
+                        {isGlobal && globalLikeCount > 0 && (
+                          <span className="ml-1 font-medium text-[var(--acc0)]">
+                            <HeartIcon size={9} className="inline fill-current" /> {globalLikeCount}
+                          </span>
+                        )}
+                      </p>
+                    </button>
+                  );
+                }
 
                 return (
                   <div
@@ -748,6 +887,24 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                         title={isGlobalLiked ? "Unlike playlist" : "Like playlist"}
                       >
                         <HeartIcon size={14} className={isGlobalLiked ? "fill-current" : ""} />
+                      </button>
+                    )}
+
+                    {/* Pin button for global playlists → Collection */}
+                    {isGlobal && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTogglePinGlobalPlaylist(pl);
+                        }}
+                        className={`shrink-0 rounded-lg p-1.5 transition-colors ${
+                          pinnedIds.has(pl.id)
+                            ? "text-[var(--acc0)] hover:bg-[var(--acc0)]/10"
+                            : "text-[var(--dim)] hover:bg-white/10 hover:text-[var(--acc0)]"
+                        }`}
+                        title={pinnedIds.has(pl.id) ? "Unpin from Collection" : "Pin to Collection"}
+                      >
+                        <PinIcon size={14} className={pinnedIds.has(pl.id) ? "fill-current" : ""} />
                       </button>
                     )}
                   </div>
@@ -867,6 +1024,25 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                     </button>
                   )}
 
+                  {/* Pin global playlists into the Collection section */}
+                  {selectedPlaylist.isPublic && selectedPlaylist.id !== "__liked_songs__" && (
+                    <button
+                      onClick={() => handleTogglePinGlobalPlaylist(selectedPlaylist)}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                        pinnedIds.has(selectedPlaylist.id)
+                          ? "border border-[var(--acc0)]/40 bg-[var(--acc0)]/15 text-[var(--acc0)]"
+                          : "border border-white/15 bg-white/5 text-[var(--dim)] hover:bg-white/10 hover:text-[var(--acc0)]"
+                      }`}
+                      title={pinnedIds.has(selectedPlaylist.id) ? "Unpin from Collection" : "Pin to Collection"}
+                    >
+                      <PinIcon
+                        size={13}
+                        className={pinnedIds.has(selectedPlaylist.id) ? "fill-current" : ""}
+                      />
+                      {pinnedIds.has(selectedPlaylist.id) ? "Pinned" : "Pin"}
+                    </button>
+                  )}
+
                   {selectedPlaylist.id !== "__liked_songs__" && (!selectedPlaylist.owner_uid || selectedPlaylist.owner_uid === userId()) && (
                     <button
                       onClick={() => handleDeletePlaylist(selectedPlaylist.id)}
@@ -979,7 +1155,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                           {addToPlaylistTrack?.id === t.id && (
                             <div
                               data-add-to-playlist-popup
-                              className="absolute right-0 top-full z-50 mt-1 w-52 rounded-xl border border-white/15 bg-[#0e1626] p-2 shadow-2xl"
+                              className="screen-surface absolute right-0 top-full z-50 mt-1 w-52 rounded-xl border border-white/15 p-2 shadow-2xl"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <div className="mb-1 px-2 py-1 text-[10px] font-semibold text-[var(--dim)] uppercase tracking-wider">
@@ -1112,7 +1288,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       {/* Modal: Create Playlist */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-[#0e1626] p-6 shadow-2xl space-y-4">
+          <div className="screen-surface w-full max-w-md rounded-2xl border border-white/15 p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-white">Create New Playlist</h3>
               <button onClick={() => setShowCreateModal(false)} className="text-[var(--dim)] hover:text-white">
@@ -1167,7 +1343,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
       {/* Modal: Import Tracks */}
       {showImportModal && selectedPlaylist && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
-          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-[#0e1626] p-6 shadow-2xl space-y-4">
+          <div className="screen-surface w-full max-w-md rounded-2xl border border-white/15 p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-white">Import to "{selectedPlaylist.title}"</h3>

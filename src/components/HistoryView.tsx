@@ -1,6 +1,6 @@
-import React, { useState } from "react";
-import { motion } from "framer-motion";
-import { persistence, type TrackHistoryItem, type RoomHistoryItem } from "../lib/persistence";
+import React, { useEffect, useState } from "react";
+import { motion } from "motion/react";
+import { persistence, subscribeToHistoryChanges, type TrackHistoryItem, type RoomHistoryItem } from "../lib/persistence";
 import type { Track } from "../lib/trackModel";
 import {
   HistoryIcon,
@@ -18,6 +18,8 @@ interface HistoryViewProps {
   onAddToQueue: (track: Track) => void;
   onJoinRoom: (roomCode: string) => void;
   onToast: (msg: string) => void;
+  /** videoId of the currently loaded track — drives the live "Playing" badge. */
+  currentVideoId?: string | null;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -25,11 +27,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   onAddToQueue,
   onJoinRoom,
   onToast,
+  currentVideoId,
 }) => {
   const [tab, setTab] = useState<"tracks" | "rooms">("tracks");
   const [trackHistory, setTrackHistory] = useState<TrackHistoryItem[]>(() => persistence.getTrackHistory());
   const [roomHistory, setRoomHistory] = useState<RoomHistoryItem[]>(() => persistence.getRoomHistory());
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  // Live-refresh both lists whenever history changes (play, clear, other tabs).
+  useEffect(() => subscribeToHistoryChanges(() => {
+    setTrackHistory(persistence.getTrackHistory());
+    setRoomHistory(persistence.getRoomHistory());
+  }), []);
+
+  const activeTrackId = currentVideoId ?? persistence.getPlayback().trackId;
 
   const clearCurrentHistory = () => {
     if (tab === "tracks") {
@@ -127,7 +138,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         ) : (
           <div className="grid grid-cols-1 gap-2">
             {trackHistory.map((item, idx) => {
-              const isCurrent = persistence.getPlayback().trackId === item.track.videoId;
+              const isCurrent = activeTrackId === item.track.videoId;
               return (
                 <motion.div
                   key={`${item.track.id}-${item.playedAt}`}
@@ -143,7 +154,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
                     <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-black/40 border border-white/10">
                       <img
-                        src={item.track.coverUrl || item.track.artwork || "/cover-placeholder.jpg"}
+                        src={item.track.thumb || item.track.coverUrl || item.track.artwork || "/icon.svg"}
                         alt=""
                         className="h-full w-full object-cover object-center"
                       />

@@ -1,4 +1,5 @@
 import type { Track, TrackSourceType } from "./trackModel";
+import { searchRemote, type RemoteSearchItem } from "./streamResolver";
 export type { Track, TrackSourceType };
 
 /* ------------------------------------------------------------------ */
@@ -320,11 +321,33 @@ function markEndpointFailed(urlStr: string): void {
   }
 }
 
-/** Searches YouTube via public keyless endpoints with fast failure */
+/** Searches YouTube — same-origin Innertube function first, public keyless endpoints as fallback. */
 export async function searchYouTube(query: string, limit = 10): Promise<Track[]> {
-  const q = encodeURIComponent(query.trim());
+  const text = query.trim();
+  const q = encodeURIComponent(text);
   const known = new Set<string>();
 
+  // 1) Same-origin Innertube search (server-side via Netlify function / Vite
+  //    dev middleware — reliable, no CORS, no API key).
+  try {
+    const items = await searchRemote(text, limit);
+    const out: Track[] = [];
+    for (const it of items) {
+      if (it.kind === "playlist") continue;
+      if (!it.videoId || known.has(it.videoId) || !it.title) continue;
+      known.add(it.videoId);
+      const artist = (it.author || "YouTube").replace(/^.*@\s*/, "").slice(0, 36);
+      out.push(
+        makeTrack(it.videoId, it.title.slice(0, 80), artist, "Search result", "similar", it.durationSeconds ?? undefined)
+      );
+      if (out.length >= limit) break;
+    }
+    if (out.length) return out;
+  } catch {
+    /* fall through to public instances */
+  }
+
+  // 2) Public keyless endpoints with fast failure (fallback)
   // Filter to healthy endpoints first
   const candidates = SEARCH_ENDPOINTS.filter((ep) => isEndpointHealthy(ep.url(q))).slice(0, 3);
   if (!candidates.length) candidates.push(SEARCH_ENDPOINTS[0]);
@@ -348,6 +371,39 @@ export async function searchYouTube(query: string, limit = 10): Promise<Track[]>
     }
   }
   return [];
+}
+
+/** Mixed search: songs AND YouTube playlists in one same-origin round-trip. */
+export interface YouTubeSearchMix {
+  tracks: Track[];
+  playlists: RemoteSearchItem[];
+}
+
+export async function searchYouTubeMixed(query: string, limit = 10): Promise<YouTubeSearchMix> {
+  const text = query.trim();
+  try {
+    const items = await searchRemote(text, limit);
+    const tracks: Track[] = [];
+    const playlists: RemoteSearchItem[] = [];
+    const known = new Set<string>();
+    for (const it of items) {
+      if (it.kind === "playlist") {
+        if (it.playlistId && playlists.length < 6) playlists.push(it);
+        continue;
+      }
+      if (!it.videoId || known.has(it.videoId) || !it.title) continue;
+      known.add(it.videoId);
+      const artist = (it.author || "YouTube").replace(/^.*@\s*/, "").slice(0, 36);
+      tracks.push(
+        makeTrack(it.videoId, it.title.slice(0, 80), artist, "Search result", "similar", it.durationSeconds ?? undefined)
+      );
+      if (tracks.length >= limit) break;
+    }
+    if (tracks.length || playlists.length) return { tracks, playlists };
+  } catch {
+    /* fall through to song-only fallback */
+  }
+  return { tracks: await searchYouTube(query, limit), playlists: [] };
 }
 
 /**

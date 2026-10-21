@@ -1,5 +1,7 @@
 import { useMobileNavigation } from "../../hooks/useMobileNavigation";
 import { usePwaInstall } from "../../hooks/usePwaInstall";
+import { useEffect } from "react";
+import { setMobileNavHandler } from "../../lib/mobileNavBus";
 import type { Track } from "../../lib/trackModel";
 import type { Theme } from "../../themes";
 import type { Settings } from "../../hooks/useSettings";
@@ -43,6 +45,7 @@ interface Props {
   onReorderTrack: (from: number, to: number) => void;
   onFindSimilar: () => void;
   similarBusy: boolean;
+  onClearQueue?: () => void;
   onFile: (file: File) => void;
   uploadBusy: boolean;
   maxUpload: number;
@@ -52,6 +55,8 @@ interface Props {
   onDeleteItem: (id: string) => void;
   onClearMedia: () => void;
   onSeek?: (pos: number) => void;
+  onSearch: () => void;
+  onHistory: () => void;
 }
 
 export function MobileShell({
@@ -77,6 +82,7 @@ export function MobileShell({
   onReorderTrack,
   onFindSimilar,
   similarBusy,
+  onClearQueue,
   onFile,
   uploadBusy,
   maxUpload,
@@ -86,6 +92,8 @@ export function MobileShell({
   onDeleteItem,
   onClearMedia,
   onSeek,
+  onSearch,
+  onHistory,
 }: Props) {
   const {
     activeTab,
@@ -96,6 +104,9 @@ export function MobileShell({
     confirmExit,
     cancelExit,
   } = useMobileNavigation(true);
+
+  // App-level entry points (search results, etc.) can jump to a tab
+  useEffect(() => setMobileNavHandler(setActiveTab), [setActiveTab]);
 
   const { canInstall, promptInstall, isFullscreen, toggleFullscreen } = usePwaInstall();
 
@@ -112,6 +123,8 @@ export function MobileShell({
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         onOpenCustomize={() => setActiveTab("customization")}
+        onSearch={onSearch}
+        onHistory={onHistory}
       />
 
       {/* 2. Middle Scrollable Screen Area */}
@@ -166,6 +179,7 @@ export function MobileShell({
             onFindSimilar={onFindSimilar}
             similarBusy={similarBusy}
             onToast={onToast}
+            onClearQueue={onClearQueue}
           />
         )}
 

@@ -233,7 +233,7 @@ export function MobileCustomizeScreen({
       <div className="mb-5">
         <SectionTitle>Glass Tiles</SectionTitle>
         <SliderRow label="Border width" value={settings.borderWidth} min={0} max={4} step={0.5} fmt={(v) => `${v}px`} onChange={(v) => update("borderWidth", v)} />
-        <SliderRow label="Tile opacity" value={settings.tileOpacity} min={0.2} max={2} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => update("tileOpacity", v)} />
+        <SliderRow label="Tile opacity" value={settings.tileOpacity} min={0} max={2} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => update("tileOpacity", v)} />
         <SliderRow label="Roundness" value={settings.tileSize} min={6} max={40} fmt={(v) => `${v}px`} onChange={(v) => update("tileSize", v)} />
       </div>
 

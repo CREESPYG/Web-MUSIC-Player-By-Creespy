@@ -56,7 +56,9 @@ export interface AppPreferences {
   borderWidth: number;
   tileOpacity: number;
   tileSize: number;
-  activeScreen: "landing" | "player" | "queue" | "playlists" | "rooms" | "history" | "whatsnew" | "about" | "settings";
+  activeScreen: "landing" | "player" | "queue" | "playlists" | "rooms" | "history" | "whatsnew" | "about" | "settings" | "library" | "search";
+  /** Global (community) playlists pinned into the Collection section. */
+  pinnedGlobalPlaylists?: CustomPlaylist[];
 }
 
 export interface PersistentStoreSchema {
@@ -100,6 +102,15 @@ const playlistListeners: Set<PlaylistCallback> = new Set();
 export function subscribeToPlaylistChanges(callback: PlaylistCallback): () => void {
   playlistListeners.add(callback);
   return () => playlistListeners.delete(callback);
+}
+
+// History change subscribers
+type HistoryCallback = () => void;
+const historyListeners: Set<HistoryCallback> = new Set();
+
+export function subscribeToHistoryChanges(callback: HistoryCallback): () => void {
+  historyListeners.add(callback);
+  return () => historyListeners.delete(callback);
 }
 
 const DEFAULT_STORE: PersistentStoreSchema = {
@@ -251,10 +262,42 @@ class PersistenceManager {
     playlistListeners.forEach((cb) => cb(playlists));
   }
 
+  public getPinnedGlobalPlaylists(): CustomPlaylist[] {
+    return this.store.preferences.pinnedGlobalPlaylists ?? [];
+  }
+
+  public isGlobalPlaylistPinned(id: string): boolean {
+    return (this.store.preferences.pinnedGlobalPlaylists ?? []).some((p) => p.id === id);
+  }
+
+  /** Returns the new pinned state (true = now pinned). */
+  public togglePinGlobalPlaylist(pl: CustomPlaylist): boolean {
+    const cur = this.store.preferences.pinnedGlobalPlaylists ?? [];
+    const exists = cur.some((p) => p.id === pl.id);
+    this.setPreferences({
+      pinnedGlobalPlaylists: exists ? cur.filter((p) => p.id !== pl.id) : [{ ...pl }, ...cur],
+    });
+    return !exists;
+  }
+
+  public unpinGlobalPlaylist(id: string): void {
+    const cur = this.store.preferences.pinnedGlobalPlaylists ?? [];
+    if (!cur.some((p) => p.id === id)) return;
+    this.setPreferences({ pinnedGlobalPlaylists: cur.filter((p) => p.id !== id) });
+  }
+
+  /** Refresh a pinned snapshot with fresh data from the network (if still pinned). */
+  public refreshPinnedGlobalPlaylist(pl: CustomPlaylist): void {
+    const cur = this.store.preferences.pinnedGlobalPlaylists ?? [];
+    if (!cur.some((p) => p.id === pl.id)) return;
+    this.setPreferences({ pinnedGlobalPlaylists: cur.map((p) => (p.id === pl.id ? pl : p)) });
+  }
+
   public addTrackToHistory(track: Track): void {
     const existing = this.store.trackHistory.filter((h) => h.track.videoId !== track.videoId);
     this.store.trackHistory = [{ track, playedAt: Date.now() }, ...existing.slice(0, 49)];
     this.saveToStorage();
+    historyListeners.forEach((cb) => cb());
   }
 
   public getTrackHistory(): TrackHistoryItem[] {
@@ -264,12 +307,14 @@ class PersistenceManager {
   public clearTrackHistory(): void {
     this.store.trackHistory = [];
     this.saveToStorage();
+    historyListeners.forEach((cb) => cb());
   }
 
   public addRoomToHistory(room: Omit<RoomHistoryItem, "lastJoined">): void {
     const existing = this.store.roomHistory.filter((h) => h.roomCode !== room.roomCode && h.roomId !== room.roomId);
     this.store.roomHistory = [{ ...room, lastJoined: Date.now() }, ...existing.slice(0, 19)];
     this.saveToStorage();
+    historyListeners.forEach((cb) => cb());
   }
 
   public getRoomHistory(): RoomHistoryItem[] {
@@ -279,6 +324,7 @@ class PersistenceManager {
   public clearRoomHistory(): void {
     this.store.roomHistory = [];
     this.saveToStorage();
+    historyListeners.forEach((cb) => cb());
   }
 
   public toggleLike(trackId: string, track?: Track): boolean {

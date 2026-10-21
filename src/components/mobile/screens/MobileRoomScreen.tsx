@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { RoomApi } from "../../../hooks/useRoom";
 import type { Permissions } from "../../../lib/room";
-import { Switch, CopyIcon, HeadphonesIcon, CrownIcon, GlobeIcon, LockIcon, SettingsIcon, ChatIcon, GroupIcon, SendIcon, MicIcon, ShieldIcon } from "../../UiIcons";
-import { VoicePanel } from "../../VoicePanel";
+import { Switch, CopyIcon, HeadphonesIcon, CrownIcon, GlobeIcon, LockIcon, SettingsIcon, ChatIcon, GroupIcon, SendIcon, ShieldIcon } from "../../UiIcons";
 
 interface Props {
   room: RoomApi;
   onToast: (msg: string) => void;
 }
 
-type RoomTab = "hub" | "voice" | "chat" | "controls" | "members";
+type RoomTab = "hub" | "chat" | "controls" | "members";
 
 const EMOJIS = ["❤️", "🔥", "🎵", "👏", "🎉", "⚡", "✨", "🙌"];
 
@@ -293,10 +292,9 @@ export function MobileRoomScreen({ room, onToast }: Props) {
 
         {/* Compact Tab Bar */}
         <div className="mt-2 flex gap-0.5 rounded-lg border border-white/8 bg-white/[0.03] p-0.5">
-          {(["hub", "voice", "chat", "controls", "members"] as RoomTab[]).map((t) => {
-            const labels: Record<RoomTab, string> = { hub: "Room", voice: "Voice", chat: "Chat", controls: "Perms", members: "People" };
+          {(["hub", "chat", "controls", "members"] as RoomTab[]).map((t) => {
+            const labels: Record<RoomTab, string> = { hub: "Room", chat: "Chat", controls: "Perms", members: "People" };
             const counts: Partial<Record<RoomTab, number>> = { 
-              voice: room.voice.participants.length,
               chat: room.chat.length, 
               members: room.online 
             };
@@ -309,14 +307,11 @@ export function MobileRoomScreen({ room, onToast }: Props) {
                 className="relative flex-1 rounded-md py-1 font-display text-[9px] font-bold uppercase tracking-wider transition-colors"
                 style={{ background: isActive ? "var(--acc0)" : "transparent", color: isActive ? "#000" : "var(--dim)" }}
               >
-                {t === "voice" && room.voice.inVoice && (
-                  <span className="inline-block mr-1 h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                )}
                 {labels[t]}
                 {counts[t] !== undefined && counts[t]! > 0 && !isActive && (
                   <span
                     className="absolute -right-0.5 -top-0.5 flex h-3 min-w-3 items-center justify-center rounded-full px-0.5 font-tmono text-[6px] font-bold text-black"
-                    style={{ background: t === "voice" ? "#10b981" : "var(--acc0)" }}
+                    style={{ background: "var(--acc0)" }}
                   >
                     {counts[t]! > 99 ? "99+" : counts[t]}
                   </span>
@@ -325,38 +320,6 @@ export function MobileRoomScreen({ room, onToast }: Props) {
             );
           })}
         </div>
-
-        {/* Floating Mini-Voice Bar if in voice and browsing other tabs */}
-        {room.voice.inVoice && tab !== "voice" && (
-          <div className="mt-1.5 flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-300">
-            <button
-              type="button"
-              onClick={() => setTab("voice")}
-              className="flex items-center gap-1.5 truncate font-display font-bold text-left"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Voice ({room.voice.participants.length})</span>
-            </button>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => room.voice.toggleMic()}
-                className={`rounded px-1.5 py-0.5 font-tmono text-[9px] ${
-                  room.voice.effectiveMicEnabled ? "bg-white/10 text-white" : "bg-red-500/20 text-red-300"
-                }`}
-              >
-                {room.voice.effectiveMicEnabled ? "Mute" : "Unmute"}
-              </button>
-              <button
-                type="button"
-                onClick={() => room.voice.leaveVoice()}
-                className="rounded bg-red-500/20 px-1.5 py-0.5 font-tmono text-[9px] text-red-300"
-              >
-                Leave
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Tab Content */}
@@ -365,13 +328,6 @@ export function MobileRoomScreen({ room, onToast }: Props) {
         {tab === "hub" && (
           <div className="scroll-slim flex h-full flex-col gap-2 overflow-y-auto px-3 py-2 pb-8">
             {[
-              { 
-                icon: <MicIcon size={16} />, 
-                label: "Room Voice", 
-                sub: room.voice.inVoice ? `Connected (${room.voice.participants.length})` : (room.voice.voiceEnabled ? "Join voice chat" : "Voice disabled"), 
-                to: "voice" as RoomTab,
-                badge: room.voice.inVoice ? "Active" : undefined
-              },
               { icon: <ChatIcon size={16} />, label: "Live Chat", sub: `${room.chat.length} messages`, to: "chat" as RoomTab },
               { icon: <SettingsIcon size={16} />, label: "Sync & Permissions", sub: room.isHost ? "Host controls" : "Listener sync", to: "controls" as RoomTab },
               { icon: <GroupIcon size={16} />, label: "Members", sub: `${room.online} online`, to: "members" as RoomTab },
@@ -389,11 +345,6 @@ export function MobileRoomScreen({ room, onToast }: Props) {
                   <div>
                     <div className="flex items-center gap-1.5">
                       <h5 className="font-display text-[11px] font-bold text-[var(--ink)]">{item.label}</h5>
-                      {item.badge && (
-                        <span className="rounded bg-emerald-500/20 px-1 font-tmono text-[7px] text-emerald-400">
-                          {item.badge}
-                        </span>
-                      )}
                     </div>
                     <p className="text-[9px] text-[var(--dim)]">{item.sub}</p>
                   </div>
@@ -411,13 +362,6 @@ export function MobileRoomScreen({ room, onToast }: Props) {
                 Leave Room
               </button>
             </div>
-          </div>
-        )}
-
-        {/* VOICE TAB */}
-        {tab === "voice" && (
-          <div className="h-full overflow-y-auto scroll-slim">
-            <VoicePanel room={room} onToast={onToast} isMobile={true} />
           </div>
         )}
 

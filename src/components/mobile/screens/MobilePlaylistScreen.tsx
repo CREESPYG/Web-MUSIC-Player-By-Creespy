@@ -5,6 +5,7 @@ import {
   type CustomPlaylist,
   subscribeToPlaylistChanges,
 } from "../../../lib/persistence";
+import { subscribeOpenPlaylist } from "../../../lib/openPlaylistBus";
 import {
   fetchGlobalPublicPlaylists,
   subscribeToPublicPlaylists,
@@ -78,6 +79,16 @@ export function MobilePlaylistScreen({
       .finally(() => setGlobalLoading(false));
     return subscribeToPublicPlaylists(setGlobalPlaylists);
   }, []);
+
+  // Search section requested a specific playlist — jump straight to its detail view.
+  useEffect(() => {
+    return subscribeOpenPlaylist((id) => {
+      setSelectedId(id);
+      setView("detail");
+      const local = playlists.find((p) => p.id === id);
+      setTab(local && !local.isPublic ? "private" : "global");
+    });
+  }, [playlists]);
 
   const likedTracks: Track[] = useMemo(() => persistence.getLikedTracks(), [likedTrackIds]);
 

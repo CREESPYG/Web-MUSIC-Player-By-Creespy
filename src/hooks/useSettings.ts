@@ -48,7 +48,7 @@ export const DEFAULTS: Settings = {
   fxSpeed: 1,
   fxAudioReactive: true,
   fxOnMedia: true,
-  clickFx: true,
+  clickFx: false,
   beatTempo: 0,
   beatPhase: 0,
 };
@@ -76,6 +76,17 @@ export function useSettings(theme: Theme, applyTheme: (id: string) => void) {
     }
   }, [settings]);
 
+  /* One-time migration: click ripple used to be default-on — turn it off everywhere. */
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(`${KEY}.clickfx-off.v1`)) return;
+      localStorage.setItem(`${KEY}.clickfx-off.v1`, "1");
+      setSettings((s) => (s.clickFx ? { ...s, clickFx: false } : s));
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const update = useCallback(<K extends keyof Settings>(k: K, v: Settings[K]) => {
     setSettings((s) => ({ ...s, [k]: v }));
   }, []);
@@ -88,12 +99,18 @@ export function useSettings(theme: Theme, applyTheme: (id: string) => void) {
   const glassVars = useMemo(
     () => ({
       "--glass-bg": `linear-gradient(155deg, rgba(255,255,255,${(0.085 * settings.tileOpacity).toFixed(3)}), rgba(255,255,255,${(0.028 * settings.tileOpacity).toFixed(3)}))`,
-      "--glass-border": `rgba(255,255,255,${(0.06 + 0.09 * settings.tileOpacity).toFixed(3)})`,
+      "--glass-border": `rgba(255,255,255,${(0.15 * settings.tileOpacity).toFixed(3)})`,
       "--bw": `${settings.borderWidth}px`,
       "--radius": `${settings.tileSize}px`,
       "--radius-s": `${Math.max(8, Math.round(settings.tileSize * 0.66))}px`,
       "--blur": `${Math.round(10 + 6 * settings.tileOpacity)}px`,
       "--blur-s": `${Math.round(6 + 4 * settings.tileOpacity)}px`,
+      // Tile transparency — consumed by index.css (.screen-surface, .glass-soft and
+      // the bg-white/… + border-white/… token overrides) so the "Tile opacity"
+      // slider adjusts tiles/cards/rows on EVERY screen (desktop + mobile).
+      "--tile-op": String(settings.tileOpacity),
+      "--surface-a": `${Math.min(94 * settings.tileOpacity, 100).toFixed(1)}%`,
+      "--surface-b": `${Math.min(96 * settings.tileOpacity, 100).toFixed(1)}%`,
     }) as React.CSSProperties,
     [settings.tileOpacity, settings.borderWidth, settings.tileSize]
   );

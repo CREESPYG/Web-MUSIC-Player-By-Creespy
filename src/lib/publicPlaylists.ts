@@ -122,28 +122,99 @@ export async function incrementPlayCount(playlistId: string): Promise<void> {
   }
 }
 
-/** Subscribe to real-time changes in the public playlists table */
+// ---------------------------------------------------------------------------
+// Realtime — ONE shared channel for the whole app.
+//
+// Why: the phoenix adapter state is topic-shared. If any channel with a given
+// topic is already joining/joined, calling `.channel(sameTopic).on(
+// 'postgres_changes', …)` throws `cannot add postgres_changes callbacks …
+// after subscribe()`. With SearchModal + PlaylistsView + MobilePlaylistScreen
+// each subscribing independently, the second subscriber threw inside a React
+// effect and crashed the section. A module-level singleton subscribes exactly
+// once and fans updates out to a listener set — never adding bindings twice.
+// If realtime attach fails for any reason, fall back to light polling so the
+// Community section still loads.
+// ---------------------------------------------------------------------------
+
+type PublicPlaylistListener = (playlists: CustomPlaylist[]) => void;
+
+const publicPlaylistListeners = new Set<PublicPlaylistListener>();
+let sharedPlaylistChannel: ReturnType<typeof supabase.channel> | null = null;
+let realtimeDisabled = false;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+async function refreshPublicPlaylistListeners(): Promise<void> {
+  try {
+    const list = await fetchGlobalPublicPlaylists();
+    publicPlaylistListeners.forEach((fn) => {
+      try {
+        fn(list);
+      } catch {
+        /* one bad listener must not break the rest */
+      }
+    });
+  } catch (err) {
+    console.warn("[publicPlaylists] refresh failed:", err);
+  }
+}
+
+function startPollFallback(): void {
+  if (pollTimer !== null || typeof window === "undefined") return;
+  pollTimer = setInterval(() => {
+    if (publicPlaylistListeners.size > 0 && document.visibilityState !== "hidden") {
+      void refreshPublicPlaylistListeners();
+    }
+  }, 30000);
+}
+
+function ensurePublicPlaylistRealtime(): void {
+  if (sharedPlaylistChannel || realtimeDisabled) return;
+  try {
+    const channel = supabase.channel("public_playlists_changes");
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "public_playlists" },
+      () => {
+        void refreshPublicPlaylistListeners();
+      }
+    );
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        if (pollTimer !== null && typeof window !== "undefined") {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      } else {
+        console.warn("[publicPlaylists] realtime subscription status:", status);
+        // Realtime is down/reconnecting — keep the Community list fresh anyway.
+        startPollFallback();
+      }
+    });
+    sharedPlaylistChannel = channel;
+  } catch (err) {
+    console.warn("[publicPlaylists] realtime attach failed — using 30s polling:", err);
+    realtimeDisabled = true;
+    startPollFallback();
+  }
+}
+
+/**
+ * Subscribe to real-time changes in the public playlists table.
+ * Returns an unsubscribe function; the shared channel stays open for the
+ * session (cheap, and avoids re-adding postgres_changes bindings).
+ */
 export function subscribeToPublicPlaylists(
   onUpdate: (playlists: CustomPlaylist[]) => void
 ): () => void {
-  const channel = supabase
-    .channel("public_playlists_changes")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "public_playlists" },
-      async () => {
-        const updated = await fetchGlobalPublicPlaylists();
-        onUpdate(updated);
-      }
-    )
-    .subscribe(async (status) => {
-      if (status !== "SUBSCRIBED") {
-        console.warn("[publicPlaylists] realtime subscription failed:", status);
-      }
-    });
-
+  publicPlaylistListeners.add(onUpdate);
+  ensurePublicPlaylistRealtime();
+  if (realtimeDisabled) startPollFallback();
   return () => {
-    supabase.removeChannel(channel);
+    publicPlaylistListeners.delete(onUpdate);
+    if (publicPlaylistListeners.size === 0 && pollTimer !== null && typeof window !== "undefined") {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
   };
 }
 

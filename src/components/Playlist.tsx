@@ -1,13 +1,13 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Track } from "../lib/media";
-import { similarity } from "../lib/media";
+import { similarity, searchYouTube } from "../lib/media";
 import type { PlayerApi } from "../hooks/usePlayer";
 import { useIncrementalList } from "../hooks/useIncrementalList";
 import { fmtTime } from "../lib/color";
 import { cn } from "../utils/cn";
 import { PlayIcon } from "./Icons";
-import { LinkIcon, PlusIcon, SparkIcon, TrashIcon } from "./UiIcons";
+import { LinkIcon, PlusIcon, SearchIcon, SparkIcon, TrashIcon } from "./UiIcons";
 
 export interface PlaylistProps {
   tracks: Track[];
@@ -20,6 +20,12 @@ export interface PlaylistProps {
   similarBusy: boolean;
   similarLive: boolean | null;
   onReorder?: (from: number, to: number) => void;
+  /** Queue a YouTube search result directly. */
+  onAddTrack?: (t: Track) => void;
+  /** Play a YouTube search result now. */
+  onPlayTrack?: (t: Track) => void;
+  /** Clear the queue but keep the currently loaded track. */
+  onClearQueue?: () => void;
 }
 
 function PlaylistInner({
@@ -33,18 +39,60 @@ function PlaylistInner({
   similarBusy,
   similarLive: _similarLive,
   onReorder,
+  onAddTrack,
+  onPlayTrack,
+  onClearQueue,
 }: PlaylistProps) {
   const [draft, setDraft] = useState("");
   const [openInput, setOpenInput] = useState(false);
+  const [results, setResults] = useState<Track[]>([]);
+  const [searching, setSearching] = useState(false);
   const current = tracks[player.index];
   const magic = player.shuffleMode === "magic";
+
+  const looksLikeLink =
+    /^\s*https?:\/\//i.test(draft) || /^\s*(spotify:|www\.|youtu\.be\b|youtube\.com\b|soundcloud\.com\b)/i.test(draft);
+
+  /* Debounced keyword search — only when the draft is NOT a pasted link. */
+  useEffect(() => {
+    const text = draft.trim();
+    if (!openInput || looksLikeLink || text.length < 2 || !navigator.onLine) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = window.setTimeout(() => {
+      searchYouTube(text, 6)
+        .then((rs) => {
+          if (draft.trim() === text) setResults(rs);
+        })
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 420);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, openInput]);
 
   const { containerRef, sentinelRef, visible, hasMore } = useIncrementalList<Track, HTMLUListElement, HTMLLIElement>(tracks);
 
   const submit = () => {
     if (!draft.trim()) return;
-    onAdd(draft.trim());
+    if (looksLikeLink) {
+      onAdd(draft.trim());
+      setDraft("");
+      setResults([]);
+      return;
+    }
+    // Keyword mode: Enter plays the first search result immediately.
+    if (results[0]) playResult(results[0]);
+  };
+
+  const playResult = (t: Track) => {
+    if (!onPlayTrack) return;
+    onPlayTrack(t);
     setDraft("");
+    setResults([]);
   };
 
   const handleMoveUp = (i: number, e: React.MouseEvent) => {
@@ -65,15 +113,27 @@ function PlaylistInner({
           <span className="font-tmono text-[10px] uppercase tracking-[0.16em] text-[var(--dim)]">
             {tracks.length} track{tracks.length === 1 ? "" : "s"}
           </span>
+          {onClearQueue && tracks.length > 1 && (
+            <motion.button
+              whileHover={{ scale: 1.06 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={onClearQueue}
+              className="flex items-center gap-1.5 rounded-full border border-white/12 bg-white/3 px-2.5 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)] transition-colors hover:border-[#ff9aa6]/60 hover:text-[#ff9aa6]"
+              aria-label="Clear queue"
+              title="Clear queue — keeps the current track playing"
+            >
+              <TrashIcon size={11} /> clear
+            </motion.button>
+          )}
           <motion.button
             whileHover={{ scale: 1.06 }}
             whileTap={{ scale: 0.9 }}
             onClick={() => setOpenInput((o) => !o)}
             className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-black shadow-sm"
             style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
-            aria-label="Add song link"
+            aria-label="Search YouTube or add link"
           >
-            <PlusIcon size={12} /> add link
+            <SearchIcon size={12} /> search
           </motion.button>
         </div>
       </div>
@@ -104,7 +164,7 @@ function PlaylistInner({
         </button>
       </div>
 
-      {/* paste-a-link row */}
+      {/* paste-a-link OR keyword-search row */}
       <AnimatePresence initial={false}>
         {openInput && (
           <motion.div
@@ -120,19 +180,87 @@ function PlaylistInner({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && submit()}
-                placeholder="Paste YouTube or Spotify link..."
+                placeholder="Paste a link or search YouTube…"
                 className="flex-1 rounded-xl border border-white/12 bg-black/40 px-3.5 py-2 font-tmono text-[11px] text-[var(--ink)] placeholder-[var(--dim)] outline-none focus:border-[var(--acc0)]"
               />
-              <button
-                onClick={submit}
-                disabled={busy || !draft.trim()}
-                className="rounded-xl px-4 py-2 font-tmono text-[10px] uppercase tracking-[0.12em] text-black font-semibold disabled:opacity-40"
-                style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
-              >
-                {busy ? "adding…" : "queue"}
-              </button>
+              {looksLikeLink ? (
+                <button
+                  onClick={submit}
+                  disabled={busy || !draft.trim()}
+                  className="rounded-xl px-4 py-2 font-tmono text-[10px] uppercase tracking-[0.12em] text-black font-semibold disabled:opacity-40"
+                  style={{ background: "linear-gradient(135deg,var(--acc0),var(--acc1))" }}
+                >
+                  {busy ? "adding…" : "queue"}
+                </button>
+              ) : (
+                <span className="flex items-center rounded-xl border border-white/10 bg-white/3 px-3 font-tmono text-[9px] uppercase tracking-[0.1em] text-[var(--dim)]">
+                  enter ↵ plays
+                </span>
+              )}
             </div>
             {error && <p className="mt-1 px-1 font-tmono text-[9px] text-[#ff9aa6]">{error}</p>}
+
+            {/* Keyword search results — play or queue directly */}
+            {!looksLikeLink && draft.trim().length >= 2 && (
+              <div className="mt-2">
+                {searching && (
+                  <p className="px-1 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]">
+                    searching youtube…
+                  </p>
+                )}
+                {!searching && results.length === 0 && (
+                  <p className="px-1 py-1.5 font-tmono text-[9px] uppercase tracking-[0.14em] text-[var(--dim)]">
+                    no results — try another keyword or paste a link
+                  </p>
+                )}
+                {results.length > 0 && (
+                  <div className="scroll-slim max-h-52 space-y-1 overflow-y-auto pr-0.5">
+                    {results.map((r) => (
+                      <div
+                        key={`qres-${r.videoId || r.id}`}
+                        className="group flex items-center gap-2 rounded-[var(--radius-s)] p-1.5 transition-colors hover:bg-white/5"
+                      >
+                        <img
+                          src={r.thumb || `https://i.ytimg.com/vi/${r.videoId}/mqdefault.jpg`}
+                          alt=""
+                          className="h-8 w-8 shrink-0 rounded-lg border border-white/8 object-cover"
+                          loading="lazy"
+                        />
+                        <button
+                          onClick={() => playResult(r)}
+                          className="min-w-0 flex-1 text-left"
+                          title="Play now"
+                        >
+                          <span className="block truncate text-[11.5px] font-semibold text-[var(--ink)]">{r.title}</span>
+                          <span className="block truncate text-[10px] text-[var(--dim)]">{r.artist}</span>
+                        </button>
+                        <span className="shrink-0 font-tmono text-[9px] text-[var(--dim)]">
+                          {r.duration ? fmtTime(r.duration) : ""}
+                        </span>
+                        {onAddTrack && (
+                          <button
+                            onClick={() => onAddTrack(r)}
+                            title="Add to queue"
+                            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[var(--dim)] transition-colors hover:bg-white/10 hover:text-white"
+                          >
+                            <PlusIcon size={13} />
+                          </button>
+                        )}
+                        {onPlayTrack && (
+                          <button
+                            onClick={() => playResult(r)}
+                            title="Play now"
+                            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--acc0)]/15 text-[var(--acc0)] transition-colors hover:bg-[var(--acc0)]/30"
+                          >
+                            <PlayIcon size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -224,7 +352,7 @@ function PlaylistInner({
               </motion.button>
 
               {/* Host / User Management Controls: Move Up, Move Down, Remove */}
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 z-10 bg-[#070e1b]/80 backdrop-blur-sm rounded-lg p-1 border border-white/10">
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 z-10 bg-black/70 backdrop-blur-sm rounded-lg p-1 border border-white/10">
                 {onReorder && i > 0 && (
                   <button
                     onClick={(e) => handleMoveUp(i, e)}
@@ -276,7 +404,9 @@ function playlistPropsEqual(prev: PlaylistProps, next: PlaylistProps): boolean {
   if (prev.similarBusy !== next.similarBusy) return false;
   if (prev.onAdd !== next.onAdd || prev.onRemove !== next.onRemove) return false;
   if (prev.onReorder !== next.onReorder) return false;
-  if (prev.similarLive !== next.similarLive) return false;
+  if (prev.onAddTrack !== next.onAddTrack || prev.onPlayTrack !== next.onPlayTrack) return false;
+  if (prev.onClearQueue !== next.onClearQueue) return false;
+  if (prev.onFindSimilar !== next.onFindSimilar || prev.similarLive !== next.similarLive) return false;
   const p = prev.player;
   const q = next.player;
   return (

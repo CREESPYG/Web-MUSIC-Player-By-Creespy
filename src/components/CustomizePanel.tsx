@@ -25,6 +25,8 @@ import { AccentColorPicker } from "./AccentColorPicker";
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Render as a full-screen page section instead of a right-edge drawer. */
+  inline?: boolean;
   theme: Theme;
   settings: Settings;
   update: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
@@ -132,6 +134,7 @@ function MediaThumb({ item, active, onClick, onDelete }: { item: BgItem; active:
 export function CustomizePanel({
   open,
   onClose,
+  inline = false,
   theme,
   settings,
   update,
@@ -177,21 +180,9 @@ export function CustomizePanel({
 
   const totalSize = library.items.reduce((s, i) => s + i.size, 0);
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="fixed inset-0 z-[65] bg-black/45 backdrop-blur-[2px]" />
-          <motion.aside
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 320, damping: 34 }}
-            className="fixed right-0 top-0 z-[66] flex h-full w-full max-w-[min(380px,100vw)] flex-col border-l border-white/10"
-            style={{ background: "linear-gradient(180deg, rgba(9,14,22,0.96), rgba(6,10,17,0.985))", backdropFilter: "blur(26px)" }}
-            aria-label="Customize panel"
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-3.5">
+  const inner = (
+    <>
+          <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-5 py-3.5">
               <h3 className="flex items-center gap-2.5 font-display text-[15px] font-bold tracking-[0.06em] text-[var(--ink)]">
                 <span className="text-[var(--acc0)]">
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
@@ -270,7 +261,7 @@ export function CustomizePanel({
 
               <SectionTitle>Glass tiles</SectionTitle>
               <SliderRow label="Border width" left="none" right="thick" min={0} max={4} step={0.5} value={settings.borderWidth} onChange={(v: number) => update("borderWidth", v)} format={(v: number) => `${v}px`} />
-              <SliderRow label="Tile opacity" left="light" right="opaque" min={0.2} max={2} step={0.05} value={settings.tileOpacity} onChange={(v: number) => update("tileOpacity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
+              <SliderRow label="Tile opacity" left="transparent" right="opaque" min={0} max={2} step={0.05} value={settings.tileOpacity} onChange={(v: number) => update("tileOpacity", v)} format={(v: number) => `${Math.round(v * 100)}%`} />
               <SliderRow label="Tile roundness" left="sharp" right="pill" min={6} max={40} value={settings.tileSize} onChange={(v: number) => update("tileSize", v)} format={(v: number) => `${v}px`} />
 
               <div className="mb-4 mt-4 h-px bg-white/8" />
@@ -588,6 +579,34 @@ export function CustomizePanel({
                 <DownloadIcon size={11} /> clips cached on device · settings saved locally
               </p>
             </div>
+    </>
+  );
+
+  if (inline) {
+    return (
+      <div
+        className="screen-surface flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10"
+        aria-label="Customization screen"
+      >
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="fixed inset-0 z-[65] bg-black/45 backdrop-blur-[2px]" />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="screen-surface fixed right-0 top-0 z-[66] flex h-full w-full max-w-[min(380px,100vw)] flex-col border-l border-white/10"
+            aria-label="Customize panel"
+          >
+            {inner}
           </motion.aside>
         </>
       )}

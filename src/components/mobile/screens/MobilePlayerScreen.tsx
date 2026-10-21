@@ -244,7 +244,7 @@ export function MobilePlayerScreen({
           onClick={() => setShowSleepModal(false)}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0c1220]/95 p-4 shadow-2xl backdrop-blur-xl"
+            className="screen-surface w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">

@@ -26,6 +26,7 @@ import {
   type BgLibrary,
 } from "./lib/bgStore";
 import { usePlayer, type PlayerApi } from "./hooks/usePlayer";
+import { useLiveBgVideo } from "./hooks/useLiveBgVideo";
 import { useBeatDriver } from "./hooks/useBeat";
 import { usePresence } from "./hooks/usePresence";
 import { useOnline } from "./hooks/useOnline";
@@ -42,15 +43,21 @@ import { ClockCard } from "./components/Clock";
 import { TimeScreen } from "./components/TimeScreen";
 import { CustomizePanel } from "./components/CustomizePanel";
 import { RoomPanel } from "./components/RoomPanel";
-import { PlaylistsView } from "./components/PlaylistsView";
+import { SearchModal } from "./components/SearchModal";
+import { HistoryView } from "./components/HistoryView";
+import { LibraryScreen } from "./components/LibraryScreen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackgroundImportWindow } from "./components/BackgroundImportWindow";
 import { useRoom } from "./hooks/useRoom";
 import { readInviteCode, type PlaybackState } from "./lib/room";
 import { Toasts, type Toast } from "./components/Toasts";
-import { FolderMusicIcon, CloseIcon, ListMusicIcon, ClockOnlyIcon } from "./components/UiIcons";
+import { ListMusicIcon, ClockOnlyIcon } from "./components/UiIcons";
 import { cn } from "./utils/cn";
 import { persistence } from "./lib/persistence";
 import { deriveAccents } from "./lib/color";
+import { requestMobileTab } from "./lib/mobileNavBus";
+import { requestOpenPlaylist } from "./lib/openPlaylistBus";
+import type { ScreenId } from "./lib/screens";
 import { initMemoryOptimizer, setMemoryGovernorPlayerActive, trackBlobUrl, untrackBlobUrl } from "./lib/memoryManager";
 import { MobileShell } from "./components/mobile/MobileShell";
 
@@ -221,6 +228,24 @@ export default function App() {
     [pushToast]
   );
 
+  /** Clear the queue but keep the currently loaded track playing (seamless). */
+  const clearQueue = useCallback(() => {
+    const idx = playerRef.current?.index ?? 0;
+    const cur = tracksRef.current[idx];
+    if (!tracksRef.current.length || !cur) {
+      pushToast("Queue is already empty");
+      return;
+    }
+    const next = [cur];
+    setTracks(next);
+    saveCustomTracks(next);
+    playerRef.current?.afterRemove(idx, next);
+    if (roomRef.current?.inRoom && roomRef.current.isHost) {
+      roomRef.current.broadcastQueue(next);
+    }
+    pushToast("Queue cleared — kept the current track");
+  }, [pushToast]);
+
   const topUpSimilar = useCallback(
     async (announce = false) => {
       if (similarBusy) return;
@@ -313,6 +338,61 @@ export default function App() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player.playing, player.shuffleMode, player.index, tracks.length, similarBusy, isOnline]);
+
+  /* ---------------- Autoplay resume (YouTube-Music style) -----------------------
+   * When repeat-off stops a run (end of queue, or all tracks played once under
+   * magic/random), fetch a fresh batch of discoveries and keep the session
+   * going automatically. Gated on online + auto-queue/auto-discovery prefs so a
+   * purely manual listening session is never interrupted. */
+  const resumeAtRef = useRef(0);
+  useEffect(() => {
+    if (player.playing) return;
+    if (!player.autoStopped) return; // only resume after an auto stop (not user pause)
+    if (!isOnline) return;
+    if (!persistence.getPreferences().autoQueue && player.shuffleMode === "off") return;
+    if (similarBusy) return;
+    if (!tracks.length) return;
+    if (Date.now() < resumeAtRef.current) return;
+    resumeAtRef.current = Date.now() + 12_000;
+    const cur = tracksRef.current[player.index];
+    if (!cur?.videoId) return;
+
+    const known = new Set<string>();
+    tracksRef.current.forEach((t) => {
+      if (t.videoId) known.add(t.videoId);
+      if (t.sourceTrackId) known.add(`st:${t.sourceTrackId}`);
+    });
+    persistence
+      .getTrackHistory()
+      .slice(0, 30)
+      .forEach((h) => {
+        if (h.track.videoId) known.add(h.track.videoId);
+      });
+
+    fetchSimilar(cur.videoId, known, 4, cur)
+      .then(({ tracks: found }) => {
+        if (!found.length) return;
+        setTracks((prev) => {
+          const next = [...prev];
+          for (const f of found) {
+            const exists = next.some(
+              (m) => m.videoId === f.videoId || (f.sourceTrackId && m.sourceTrackId === f.sourceTrackId)
+            );
+            if (!exists) next.push(f);
+          }
+          saveCustomTracks(next);
+          return next;
+        });
+        pushToast(`Autoplay: +${found.length} track${found.length === 1 ? "" : "s"} — continuing`);
+        window.setTimeout(() => {
+          if (playerRef.current && !playerRef.current.playing) playerRef.current.next();
+        }, 150);
+      })
+      .catch(() => {
+        /* discovery offline — stay stopped; user can press play or Find Similar */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.playing, player.autoStopped, player.index, player.shuffleMode, tracks.length, similarBusy, isOnline]);
 
   /* ---------------- native Android audio bridge ---------------- */
   useNativeAudioBridge(
@@ -489,8 +569,9 @@ export default function App() {
   }, []);
 
   /* ---------------- Room Mode (Supabase Realtime) ---------------- */
-  const [roomOpen, setRoomOpen] = useState(false);
-  const [playlistsOpen, setPlaylistsOpen] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(false); // mobile overlay (join flows from search/history)
+  const [searchOpen, setSearchOpen] = useState(false); // mobile overlay search
+  const [historyOpen, setHistoryOpen] = useState(false); // mobile overlay history
   const [roomTarget, setRoomTarget] = useState<PlaybackState | null>(null);
 
   const getPlayback = useCallback(() => {
@@ -525,6 +606,22 @@ export default function App() {
   const room = useRoom({ getPlayback, applyPlayback, getQueue, applyQueue, onToast: pushToast });
   const roomRef = useRef(room);
   roomRef.current = room;
+
+  /* Room join history — recorded the moment we're actually in a room */
+  useEffect(() => {
+    const info = room.room;
+    if (!room.inRoom || !info?.code) return;
+    try {
+      persistence.addRoomToHistory({
+        roomId: info.code,
+        roomCode: info.code,
+        name: info.name || `${info.code} Room`,
+        isHost: !!room.isHost,
+      });
+    } catch {
+      /* history is best-effort; never block room sync */
+    }
+  }, [room.inRoom, room.isHost, room.room]);
 
   const handleReorder = useCallback((from: number, to: number) => {
     setTracks((prev) => {
@@ -643,9 +740,15 @@ export default function App() {
     }
   }, [room.inRoom, room.canDrive, room.pushPlayback]);
 
-  // Auto-open room panel on invite code
+  // Invite link: useRoom auto-joins the code — land on the FULL Rooms screen,
+  // never the side overlay panel.
   useEffect(() => {
-    if (readInviteCode()) setRoomOpen(true);
+    if (readInviteCode()) {
+      setRoomOpen(false);
+      changeScreen("rooms");
+      requestMobileTab("room");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const controlsLocked = room.inRoom && !room.canDrive;
@@ -671,10 +774,12 @@ export default function App() {
   /* ---------------- settings & view mode ---------------- */
   const { settings, update, glassVars, reset, maxUpload } = useSettings(theme, applyTheme);
 
+  /* Live background wallpaper — the current track's video as a muted <video> */
+  useLiveBgVideo(settings.bgStyle, track, player.playing);
+
   /* ---------------- beat driver (visual sync; user calibration from settings) ---------------- */
   useBeatDriver(player.playing, track?.bpm ?? 96, track?.seed ?? 1, player.time, settings.beatTempo, settings.beatPhase);
 
-  const [panel, setPanel] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>("queue");
   const [view, setView] = useState<ViewMode>(() => (localStorage.getItem("ripple-view") as ViewMode) || "full");
 
@@ -686,6 +791,84 @@ export default function App() {
       /* noop */
     }
   }, []);
+
+  /* ---------------- Desktop screen system (screen-by-screen, no sidebars) ---------------- */
+  const [screen, setScreen] = useState<ScreenId>(() => {
+    const saved = persistence.getPreferences().activeScreen as string;
+    const valid = ["player", "library", "rooms", "history", "settings", "search"];
+    return (valid.includes(saved) ? saved : "player") as ScreenId;
+  });
+
+  const changeScreen = useCallback(
+    (s: ScreenId) => {
+      setScreen(s);
+      setSearchOpen(false);
+      persistence.setPreferences({ activeScreen: s });
+      if (s !== "player" && view === "time") changeView("full");
+    },
+    [view, changeView]
+  );
+
+  /* Shared play/queue handlers for screen-level UI (search, library, history) */
+  const uiPlayTrack = (t: Track, opts?: { goHome?: boolean }) => {
+    setTracks((prev) => {
+      const k = queueKey(t);
+      const idx = prev.findIndex((x) => queueKey(x) === k);
+      if (idx !== -1) {
+        player.select(idx);
+        return prev;
+      }
+      const next = [...prev, t];
+      saveCustomTracks(next);
+      window.setTimeout(() => player.select(next.length - 1), 60);
+      return next;
+    });
+    if (opts?.goHome) changeScreen("player");
+    pushToast(`Playing — ${t.title}`);
+  };
+
+  const uiAddToQueue = (t: Track) => {
+    setTracks((prev) => {
+      const k = queueKey(t);
+      if (prev.some((x) => queueKey(x) === k)) return prev;
+      const next = [...prev, t];
+      saveCustomTracks(next);
+      return next;
+    });
+    pushToast(`Added — ${t.title}`);
+  };
+
+  const uiPlayList = (list: Track[]) => {
+    if (!list.length) return;
+    player.loadAndPlay(list, 0);
+    setTracks(list);
+    saveCustomTracks(list);
+    changeScreen("player");
+    pushToast(`Playing (${list.length} tracks)`);
+  };
+
+  const uiQueueList = (list: Track[]) => {
+    if (!list.length) return;
+    setTracks((prev) => {
+      const existing = new Set(prev.map(queueKey));
+      const added = list.filter((x) => !existing.has(queueKey(x)));
+      const next = [...prev, ...added];
+      saveCustomTracks(next);
+      return next;
+    });
+    pushToast(`Queued ${list.length} tracks`);
+  };
+
+  const uiJoinRoom = (code: string, target: "screen" | "overlay") => {
+    // All join flows land on the full Rooms screen — never the side panel.
+    changeScreen("rooms");
+    if (target === "overlay") requestMobileTab("room");
+    if (!room.nickname || !room.nickname.trim()) {
+      pushToast(`Set your name in the Rooms screen first, then join #${code}`);
+      return;
+    }
+    room.joinRoom(code, room.nickname, false);
+  };
 
   /* ---------------- background media library (IndexedDB cache) ---------------- */
   const [library, setLibrary] = useState<BgLibrary>(() => getLibrary());
@@ -910,10 +1093,20 @@ export default function App() {
       }
 
       if (e.key === "Escape") {
-        setPanel(false);
+        setSearchOpen(false);
+        setHistoryOpen(false);
         setRoomOpen(false);
-        setPlaylistsOpen(false);
         if (view === "time") changeView("full");
+        else changeScreen("player");
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        if (window.matchMedia("(min-width: 768px)").matches) {
+          changeScreen(screen === "search" ? "player" : "search");
+        } else {
+          setSearchOpen((v) => !v);
+        }
         return;
       }
       if (typing) return;
@@ -972,7 +1165,11 @@ export default function App() {
           break;
         case "e":
         case "E":
-          setPanel((v) => !v);
+          if (window.matchMedia("(min-width: 768px)").matches) {
+            changeScreen(screen === "settings" ? "player" : "settings");
+          } else {
+            requestMobileTab("customization");
+          }
           break;
         case "v":
         case "V": {
@@ -998,7 +1195,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyTheme, themeId, pushToast, topUpSimilar, library, useItem, view, changeView]);
+  }, [applyTheme, themeId, pushToast, topUpSimilar, library, useItem, view, changeView, screen, changeScreen]);
 
   const effectiveTheme = useMemo(() => {
     if (!settings.customAccent) return theme;
@@ -1055,25 +1252,18 @@ export default function App() {
       <div className="relative z-10 hidden md:flex h-full min-h-0 flex-col">
         {/* Top Navigation Bar */}
         <TopBar
-          theme={theme}
-          customAccent={settings.customAccent}
-          onTheme={(id) => {
-            applyTheme(id);
-            update("themeId", id);
-            update("customAccent", null);
-          }}
-          onCustomAccent={(hex) => update("customAccent", hex)}
           online={online}
-          onCustomize={() => setPanel(true)}
-          customizeOpen={panel}
           mode={mode}
           view={view}
-          onView={changeView}
-          onRoom={() => setRoomOpen(true)}
+          onView={(v) => {
+            changeView(v);
+            // Split view IS the home screen — returning to it lands back on the player
+            if (v === "full") changeScreen("player");
+          }}
+          screen={screen}
+          onScreen={changeScreen}
           roomActive={room.inRoom}
           roomCount={room.online}
-          onPlaylists={() => setPlaylistsOpen(true)}
-          playlistsOpen={playlistsOpen}
         />
 
         {/* View 1: Full Clock Window with Full Weather View (Screenshot 3) */}
@@ -1087,6 +1277,89 @@ export default function App() {
               player={player}
               track={track}
             />
+          </main>
+        ) : screen !== "player" ? (
+          /* Full screens — screen-by-screen layout, no sidebars (split/clock view still global) */
+          <main className="scroll-slim mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col px-3 py-1 md:px-6 md:py-2">
+            <div className="flex min-h-0 w-full flex-1 flex-col">
+              {screen === "settings" && (
+                <ErrorBoundary key="sec-settings" label="Settings">
+                  <CustomizePanel
+                    inline
+                    open={screen === "settings"}
+                    onClose={() => changeScreen("player")}
+                    theme={effectiveTheme}
+                    settings={settings}
+                    update={update}
+                    reset={reset}
+                    onFile={onFile}
+                    onExport={exportSettings}
+                    library={library}
+                    maxUpload={maxUpload}
+                    busy={uploadBusy}
+                    onUseItem={useItem}
+                    onDeleteItem={removeItem}
+                    onClearMedia={onClearMedia}
+                    pinned={pinned}
+                    onPin={(p) => {
+                      setPinned(p);
+                      pinPlace(p);
+                      loadWeather(false);
+                      pushToast(p ? `Pinned ${p.name}` : "Weather reset to auto-detect");
+                    }}
+                  />
+                </ErrorBoundary>
+              )}
+              {screen === "rooms" && (
+                <ErrorBoundary key="sec-rooms" label="Rooms">
+                  <RoomPanel inline open={screen === "rooms"} onClose={() => changeScreen("player")} room={room} onToast={pushToast} />
+                </ErrorBoundary>
+              )}
+              {screen === "search" && (
+                <ErrorBoundary key="sec-search" label="Search">
+                  <SearchModal
+                    inline
+                    open={screen === "search"}
+                    onClose={() => changeScreen("player")}
+                    onPlayTrack={(t) => uiPlayTrack(t, { goHome: true })}
+                    onAddToQueue={uiAddToQueue}
+                    onOpenPlaylist={(pl) => {
+                      changeScreen("library");
+                      requestOpenPlaylist(pl.id);
+                    }}
+                    onJoinRoom={(code) => uiJoinRoom(code, "screen")}
+                    onToast={pushToast}
+                    onPlayList={uiPlayList}
+                    onAddListToQueue={uiQueueList}
+                    queueTracks={tracks}
+                  />
+                </ErrorBoundary>
+              )}
+              {screen === "history" && (
+                <ErrorBoundary key="sec-history" label="History">
+                  <div className="screen-surface flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10">
+                    <HistoryView
+                      onPlayTrack={(t) => uiPlayTrack(t, { goHome: true })}
+                      onAddToQueue={uiAddToQueue}
+                      onJoinRoom={(code) => uiJoinRoom(code, "screen")}
+                      onToast={pushToast}
+                      currentVideoId={track?.videoId}
+                    />
+                  </div>
+                </ErrorBoundary>
+              )}
+              {screen === "library" && (
+                <ErrorBoundary key="sec-library" label="Library">
+                  <LibraryScreen
+                    onPlayTrack={(t) => uiPlayTrack(t)}
+                    onAddToQueue={uiAddToQueue}
+                    onPlayEntirePlaylist={uiPlayList}
+                    onAddPlaylistToQueue={uiQueueList}
+                    onToast={pushToast}
+                  />
+                </ErrorBoundary>
+              )}
+            </div>
           </main>
         ) : (
           /* View 2: Split Layout */
@@ -1179,6 +1452,9 @@ export default function App() {
                   onFindSimilar={() => topUpSimilar(true)}
                   similarBusy={similarBusy}
                   similarLive={similarLive}
+                  onAddTrack={uiAddToQueue}
+                  onPlayTrack={(t) => uiPlayTrack(t)}
+                  onClearQueue={clearQueue}
                 />
               </div>
             </aside>
@@ -1213,7 +1489,7 @@ export default function App() {
             <span><kbd className="rounded bg-white/8 px-1 py-0.5 text-white/90">Space</kbd> play</span>
             <span><kbd className="rounded bg-white/8 px-1 py-0.5 text-white/90">S</kbd> shuffle</span>
             <span><kbd className="rounded bg-white/8 px-1 py-0.5 text-white/90">V</kbd> view</span>
-            <span><kbd className="rounded bg-white/8 px-1 py-0.5 text-white/90">E</kbd> customize</span>
+            <span><kbd className="rounded bg-white/8 px-1 py-0.5 text-white/90">E</kbd> settings</span>
           </div>
           <div className="flex items-center gap-2">
             <span>YOUTUBE</span>
@@ -1270,6 +1546,7 @@ onAddPlaylistToQueue={(list) => {
           onReorderTrack={handleReorder}
           onFindSimilar={() => topUpSimilar(true)}
           similarBusy={similarBusy}
+          onClearQueue={clearQueue}
           onFile={onFile}
           uploadBusy={uploadBusy}
           maxUpload={maxUpload}
@@ -1279,35 +1556,12 @@ onAddPlaylistToQueue={(list) => {
           onDeleteItem={removeItem}
           onClearMedia={onClearMedia}
           onSeek={handleSeek}
+          onSearch={() => setSearchOpen(true)}
+          onHistory={() => setHistoryOpen(true)}
         />
       </div>
 
-      {/* ---------------- Customize Drawer (Right Sidebar) ---------------- */}
-      <CustomizePanel
-        open={panel}
-        onClose={() => setPanel(false)}
-        theme={effectiveTheme}
-        settings={settings}
-        update={update}
-        reset={reset}
-        onFile={onFile}
-        onExport={exportSettings}
-        library={library}
-        maxUpload={maxUpload}
-        busy={uploadBusy}
-        onUseItem={useItem}
-        onDeleteItem={removeItem}
-        onClearMedia={onClearMedia}
-        pinned={pinned}
-        onPin={(p) => {
-          setPinned(p);
-          pinPlace(p);
-          loadWeather(false);
-          pushToast(p ? `Pinned ${p.name}` : "Weather reset to auto-detect");
-        }}
-      />
-
-      {/* ---------------- Room Panel (Right Sidebar) ---------------- */}
+      {/* ---------------- Room Panel (mobile overlay: join flows from search/history) ---------------- */}
       <RoomPanel
         open={roomOpen}
         onClose={() => setRoomOpen(false)}
@@ -1315,15 +1569,62 @@ onAddPlaylistToQueue={(list) => {
         onToast={pushToast}
       />
 
-      {/* ---------------- Playlists Hub Modal Drawer ---------------- */}
+      {/* ---------------- Global Search Modal (Ctrl/Cmd + K) ---------------- */}
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onPlayTrack={(t) => {
+          setTracks((prev) => {
+            const k = queueKey(t);
+            const idx = prev.findIndex((x) => queueKey(x) === k);
+            if (idx !== -1) {
+              player.select(idx);
+              return prev;
+            }
+            const next = [...prev, t];
+            saveCustomTracks(next);
+            window.setTimeout(() => player.select(next.length - 1), 60);
+            return next;
+          });
+          setSearchOpen(false);
+          pushToast(`Playing — ${t.title}`);
+        }}
+        onAddToQueue={(t) => {
+          setTracks((prev) => {
+            const k = queueKey(t);
+            if (prev.some((x) => queueKey(x) === k)) return prev;
+            const next = [...prev, t];
+            saveCustomTracks(next);
+            return next;
+          });
+          pushToast(`Added — ${t.title}`);
+        }}
+        onOpenPlaylist={(pl) => {
+          setSearchOpen(false);
+          changeScreen("library");
+          requestMobileTab("playlist");
+          requestOpenPlaylist(pl.id);
+        }}
+        onPlayList={uiPlayList}
+        onAddListToQueue={uiQueueList}
+        onJoinRoom={(code) => {
+          setSearchOpen(false);
+          setHistoryOpen(false);
+          uiJoinRoom(code, "overlay");
+        }}
+        queueTracks={tracks}
+        onToast={pushToast}
+      />
+
+      {/* ---------------- Playback & Room History ---------------- */}
       <AnimatePresence>
-        {playlistsOpen && (
+        {historyOpen && (
           <>
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setPlaylistsOpen(false)}
+              onClick={() => setHistoryOpen(false)}
               className="fixed inset-0 z-[65] bg-black/60 backdrop-blur-md"
             />
             <motion.div
@@ -1331,82 +1632,47 @@ onAddPlaylistToQueue={(list) => {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               transition={{ type: "spring", stiffness: 320, damping: 30 }}
-              className="fixed inset-2 sm:inset-4 md:inset-8 lg:inset-x-14 lg:inset-y-8 z-[66] max-w-5xl max-h-[86vh] w-full mx-auto my-auto flex flex-col rounded-2xl md:rounded-3xl border overflow-hidden shadow-2xl"
+              className="fixed inset-2 sm:inset-4 md:inset-8 lg:inset-x-14 lg:inset-y-8 z-[66] max-w-4xl max-h-[86vh] w-full mx-auto my-auto flex flex-col rounded-2xl md:rounded-3xl border overflow-hidden shadow-2xl"
               style={{
                 background: `linear-gradient(170deg, color-mix(in srgb, ${effectiveTheme.bg0} 94%, transparent), color-mix(in srgb, ${effectiveTheme.bg1} 96%, #050811))`,
                 borderColor: "var(--glass-border)",
                 backdropFilter: "blur(28px)",
               }}
             >
-              <div className="flex items-center justify-between border-b border-white/8 px-5 py-3 shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--acc0)]/15 text-[var(--acc0)]">
-                    <FolderMusicIcon size={16} />
-                  </span>
-                  <div>
-                    <h2 className="font-display text-sm font-bold tracking-wider uppercase text-white">
-                      Playlists Hub
-                    </h2>
-                    <p className="text-[10px] text-[var(--dim)]">
-                      Sync, import, and explore playlist collections
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setPlaylistsOpen(false)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-[var(--dim)] hover:bg-white/10 hover:text-white transition-colors"
-                  aria-label="Close"
-                >
-                  <CloseIcon size={18} />
-                </button>
-              </div>
-
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <PlaylistsView
-                  onPlayTrack={(t) => {
-                    setTracks((prev) => {
-                      const existingIdx = prev.findIndex((x) => x.videoId && x.videoId === t.videoId);
-                      if (existingIdx !== -1) {
-                        player.select(existingIdx);
-                        return prev;
-                      }
-                      const next = [...prev, t];
-                      saveCustomTracks(next);
-                      window.setTimeout(() => player.select(next.length - 1), 60);
-                      return next;
-                    });
-                    setPlaylistsOpen(false);
-                    pushToast(`Playing — ${t.title}`);
-                  }}
-                  onAddToQueue={(t) => {
-                    setTracks((prev) => {
-                      if (prev.some((x) => x.videoId && x.videoId === t.videoId)) return prev;
-                      const next = [...prev, t];
-                      saveCustomTracks(next);
-                      return next;
-                    });
-                    pushToast(`Added — ${t.title}`);
-                  }}
-                   onPlayEntirePlaylist={(list) => {
-                     if (!list.length) return;
-                     player.loadAndPlay(list, 0);
-                     setTracks(list);
-                     saveCustomTracks(list);
-                     pushToast(`Playing playlist (${list.length} tracks)`);
-                   }}
-                  onAddPlaylistToQueue={(list) => {
-                    setTracks((prev) => {
-                      const existing = new Set(prev.map(queueKey));
-                      const added = list.filter((x) => !existing.has(queueKey(x)));
-                      const next = [...prev, ...added];
-                      saveCustomTracks(next);
-                      return next;
-                    });
-                    pushToast(`Queued ${list.length} tracks`);
-                  }}
-                  onToast={pushToast}
-                />
-              </div>
+              <HistoryView
+                onPlayTrack={(t) => {
+                  setTracks((prev) => {
+                    const k = queueKey(t);
+                    const idx = prev.findIndex((x) => queueKey(x) === k);
+                    if (idx !== -1) {
+                      player.select(idx);
+                      return prev;
+                    }
+                    const next = [...prev, t];
+                    saveCustomTracks(next);
+                    window.setTimeout(() => player.select(next.length - 1), 60);
+                    return next;
+                  });
+                  setHistoryOpen(false);
+                  pushToast(`Playing — ${t.title}`);
+                }}
+                onAddToQueue={(t) => {
+                  setTracks((prev) => {
+                    const k = queueKey(t);
+                    if (prev.some((x) => queueKey(x) === k)) return prev;
+                    const next = [...prev, t];
+                    saveCustomTracks(next);
+                    return next;
+                  });
+                  pushToast(`Added — ${t.title}`);
+                }}
+                onJoinRoom={(code) => {
+                  setHistoryOpen(false);
+                  uiJoinRoom(code, "overlay");
+                }}
+                onToast={pushToast}
+                currentVideoId={track?.videoId}
+              />
             </motion.div>
           </>
         )}

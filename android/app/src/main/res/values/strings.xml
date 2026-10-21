@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CREEP CREEP</string>
+    <string name="title_activity_main">CREEP CREEP</string>
+    <string name="package_name">com.creepcreep.musicplayer</string>
+    <string name="custom_url_scheme">com.creepcreep.musicplayer</string>
+</resources>

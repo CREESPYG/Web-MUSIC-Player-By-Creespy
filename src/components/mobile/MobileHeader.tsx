@@ -1,5 +1,5 @@
 import type { MobileTab } from "../../hooks/useMobileNavigation";
-import { DownloadIcon } from "../UiIcons";
+import { DownloadIcon, SearchIcon, HistoryIcon } from "../UiIcons";
 
 interface Props {
   activeTab: MobileTab;
@@ -11,6 +11,8 @@ interface Props {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenCustomize: () => void;
+  onSearch: () => void;
+  onHistory: () => void;
 }
 
 const TITLES: Record<MobileTab, { title: string; subtitle?: string }> = {
@@ -32,6 +34,8 @@ export function MobileHeader({
   isFullscreen,
   onToggleFullscreen,
   onOpenCustomize,
+  onSearch,
+  onHistory,
 }: Props) {
   const isSubScreen = activeTab === "clock" || activeTab === "customization" || activeTab === "queue";
 
@@ -89,6 +93,26 @@ export function MobileHeader({
 
       {/* Right Area */}
       <div className="flex items-center gap-1.5">
+        {/* Search */}
+        <button
+          type="button"
+          onClick={onSearch}
+          className="grid h-8 w-8 place-items-center rounded-lg border border-white/8 bg-white/5 text-[var(--dim)] transition-colors hover:text-white active:scale-95"
+          aria-label="Search"
+        >
+          <SearchIcon size={15} />
+        </button>
+
+        {/* History */}
+        <button
+          type="button"
+          onClick={onHistory}
+          className="grid h-8 w-8 place-items-center rounded-lg border border-white/8 bg-white/5 text-[var(--dim)] transition-colors hover:text-white active:scale-95"
+          aria-label="History"
+        >
+          <HistoryIcon size={15} />
+        </button>
+
         {canInstall && (
           <button
             type="button"

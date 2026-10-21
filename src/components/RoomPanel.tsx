@@ -13,13 +13,11 @@ import {
   HeadphonesIcon,
   GroupIcon,
   LockIcon,
-  MicIcon,
   ShieldIcon,
   NotificationsIcon,
   SendIcon,
   Switch,
 } from "./UiIcons";
-import { VoicePanel } from "./VoicePanel";
 
 const PERM_LABELS: [keyof Permissions, string][] = [
   ["play_pause", "Play / Pause"],
@@ -30,7 +28,7 @@ const PERM_LABELS: [keyof Permissions, string][] = [
   ["shuffle", "Shuffle"],
 ];
 
-export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onClose: () => void; room: RoomApi; onToast: (m: string) => void }) {
+export function RoomPanel({ open, onClose, room, onToast, inline = false }: { open: boolean; onClose: () => void; room: RoomApi; onToast: (m: string) => void; inline?: boolean }) {
   const [name, setName] = useState("");
   const [type, setType] = useState<RoomType>("public");
   const [approval, setApproval] = useState(false);
@@ -42,7 +40,7 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
   const [editingNickVal, setEditingNickVal] = useState("");
   const nickInputRef = useRef<HTMLInputElement>(null);
   const [chatDraft, setChatDraft] = useState("");
-  const [inRoomTab, setInRoomTab] = useState<"voice" | "chat" | "settings" | "people">("chat");
+  const [inRoomTab, setInRoomTab] = useState<"chat" | "settings" | "people">("chat");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,20 +74,8 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
   const controls = room.canDrive; // whether this client may drive shared playback
   const inRoom = room.inRoom;
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="fixed inset-0 z-[65] bg-black/45 backdrop-blur-[2px]" />
-          <motion.aside
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 320, damping: 34 }}
-            className="fixed right-0 top-0 z-[66] flex h-[100dvh] w-full max-w-[min(620px,100vw)] sm:w-[500px] md:w-[540px] lg:w-[580px] xl:w-[620px] flex-col border-l border-white/10 shadow-[-16px_0_48px_rgba(0,0,0,0.65)]"
-            style={{ background: "linear-gradient(180deg, rgba(9,14,22,0.98), rgba(6,10,17,0.99))", backdropFilter: "blur(26px)", paddingBottom: "env(safe-area-inset-bottom)" }}
-            aria-label="Room panel"
-          >
+  const inner = (
+    <>
             {/* header */}
             <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-6 py-4">
               <h3 className="flex items-center gap-2.5 font-display text-[16px] font-bold tracking-[0.05em] text-[var(--ink)]">
@@ -406,21 +392,8 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                   {/* In-room Navigation Tabs */}
                   <div className={cn(
                     "grid gap-1 rounded-[var(--radius-s)] border border-white/8 bg-white/[0.04] p-1 shrink-0",
-                    room.isHost ? "grid-cols-4" : "grid-cols-3"
+                    room.isHost ? "grid-cols-3" : "grid-cols-2"
                   )}>
-                    <button
-                      onClick={() => setInRoomTab("voice")}
-                      className={cn(
-                        "flex items-center justify-center gap-1.5 rounded-md py-2 font-tmono text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors",
-                        inRoomTab === "voice"
-                          ? "bg-[var(--acc0)] text-black font-bold shadow-sm"
-                          : "text-[var(--dim)] hover:text-white hover:bg-white/4"
-                      )}
-                    >
-                      <MicIcon size={12} />
-                      <span>Voice</span>
-                      {room.voice.isInVoice && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-                    </button>
                     <button
                       onClick={() => setInRoomTab("chat")}
                       className={cn(
@@ -465,40 +438,6 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                       </button>
                     )}
                   </div>
-
-                  {/* Floating Mini Voice Bar (when connected to voice but viewing chat or people) */}
-                  {room.voice.isInVoice && inRoomTab !== "voice" && (
-                    <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 shrink-0 backdrop-blur-md">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                        <span className="font-display text-[11px] font-bold text-white truncate">Voice Active</span>
-                        <span className="font-tmono text-[9.5px] text-[var(--dim)] shrink-0">({room.voice.voiceCount})</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={room.voice.toggleSelfMute}
-                          className="rounded-lg bg-white/10 px-2 py-1 font-tmono text-[9px] font-semibold text-white hover:bg-white/15"
-                        >
-                          {room.voice.selfMuted ? "Unmute" : "Mute"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setInRoomTab("voice")}
-                          className="rounded-lg bg-[var(--acc0)] px-2 py-1 font-tmono text-[9px] font-bold text-black"
-                        >
-                          View
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TAB 0: VOICE */}
-                  {inRoomTab === "voice" && (
-                    <div className="flex flex-1 min-h-0 flex-col">
-                      <VoicePanel room={room} onToast={onToast} isMobile={false} />
-                    </div>
-                  )}
 
                   {/* TAB 1: LIVE CHAT (Spacious, full height) */}
                   {inRoomTab === "chat" && (
@@ -929,6 +868,35 @@ export function RoomPanel({ open, onClose, room, onToast }: { open: boolean; onC
                 </div>
               )}
             </div>
+    </>
+  );
+
+  if (inline) {
+    return (
+      <div
+        className="screen-surface flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
+        aria-label="Rooms screen"
+      >
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="fixed inset-0 z-[65] bg-black/45 backdrop-blur-[2px]" />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="screen-surface fixed right-0 top-0 z-[66] flex h-[100dvh] w-full max-w-[min(620px,100vw)] sm:w-[500px] md:w-[540px] lg:w-[580px] xl:w-[620px] flex-col border-l border-white/10 shadow-[-16px_0_48px_rgba(0,0,0,0.65)]"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+            aria-label="Room panel"
+          >
+            {inner}
           </motion.aside>
         </>
       )}

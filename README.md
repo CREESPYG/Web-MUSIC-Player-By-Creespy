@@ -6,7 +6,7 @@
 
 A premium, open-source music streaming application and real-time social listening platform. Stream any track with high fidelity, create synchronized listening rooms with live chat, discover community playlists synced across devices, and enjoy a seamless modern UI on Web, Android, and Desktop.
 
-[![Latest Release](https://img.shields.io/badge/Release-v1.5.1-c3ec52?style=for-the-badge&logo=android&logoColor=black)](release-apk/CReEPUSIK-release-signed.apk)
+[![Latest Release](https://img.shields.io/badge/Release-v1.5.1-c3ec52?style=for-the-badge&logo=android&logoColor=black)](https://github.com/CREESPYG/CReESPUSIK/releases/tag/v1.5.1)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Android%20%7C%20Desktop-121318?style=for-the-badge&logo=capacitor&logoColor=c3ec52)](https://github.com/CREESPYG/CReESPUSIK)
 [![React 19](https://img.shields.io/badge/React-19.2-121318?style=for-the-badge&logo=react&logoColor=61DAFB)](https://react.dev)
 [![Supabase](https://img.shields.io/badge/Realtime-Supabase-121318?style=for-the-badge&logo=supabase&logoColor=3ECF8E)](https://supabase.com)
@@ -14,7 +14,7 @@ A premium, open-source music streaming application and real-time social listenin
 
 <br/>
 
-[📥 **Download Latest Signed Android APK**](release-apk/CReEPUSIK-release-signed.apk) &nbsp;•&nbsp; [✨ Features](#-key-features) &nbsp;•&nbsp; [🗺️ Pages & Navigation](#-pages--navigation-sitemap) &nbsp;•&nbsp; [🛠️ Tech Stack](#-technology-stack) &nbsp;•&nbsp; [🚀 Getting Started](#-getting-started)
+[📥 **Download Latest Signed Android APK**](https://github.com/CREESPYG/CReESPUSIK/releases/download/v1.5.1/CReEPUSIK-release-signed.apk) &nbsp;•&nbsp; [✨ Features](#-key-features) &nbsp;•&nbsp; [🗺️ Pages & Navigation](#-pages--navigation-sitemap) &nbsp;•&nbsp; [🛠️ Tech Stack](#-technology-stack) &nbsp;•&nbsp; [🚀 Getting Started](#-getting-started)
 
 </div>
 
@@ -35,12 +35,12 @@ A premium, open-source music streaming application and real-time social listenin
 
 The latest production-ready signed APK is packaged directly in the repository:
 
-### 📦 [Download CReEPUSIK-release-signed.apk](release-apk/CReEPUSIK-release-signed.apk)
+### 📦 [Download CReEPUSIK-release-signed.apk](https://github.com/CREESPYG/CReESPUSIK/releases/download/v1.5.1/CReEPUSIK-release-signed.apk) ([View on GitHub Releases](https://github.com/CREESPYG/CReESPUSIK/releases/tag/v1.5.1))
 
 | File | Type | Signature | Size |
 |------|------|-----------|------|
-| [`CReEPUSIK-release-signed.apk`](release-apk/CReEPUSIK-release-signed.apk) | **Production Release** | **v2 + v3 Signed** | `~3.9 MB` |
-| [`CReEPUSIK-debug.apk`](release-apk/CReEPUSIK-debug.apk) | Debug Build | Debug Keystore | `~5.5 MB` |
+| [`CReEPUSIK-release-signed.apk`](https://github.com/CREESPYG/CReESPUSIK/releases/download/v1.5.1/CReEPUSIK-release-signed.apk) | **Production Release** | **v2 + v3 Signed** | `~3.9 MB` |
+| [`CReEPUSIK-debug.apk`](https://github.com/CREESPYG/CReESPUSIK/releases/download/v1.5.1/CReEPUSIK-debug.apk) | Debug Build | Debug Keystore | `~5.5 MB` |
 
 ### 📲 How to Install on Android
 1. Download [`CReEPUSIK-release-signed.apk`](release-apk/CReEPUSIK-release-signed.apk) to your Android device.

@@ -7,8 +7,11 @@
  * Resolves YouTube audio/video stream URLs server-side (same-origin, no CORS);
  * `kind=search` performs a YouTube keyword search (Search screen) the same way.
  */
-import { resolveInnertube, type InnertubeResult } from "../innertube/resolve";
-import { searchInnertube, type InnertubeSearchResult } from "../innertube/search";
+// ".js" specifiers are required: Vercel executes the traced graph as plain
+// Node ESM (no extension inference). Vite/vitest/esbuild/Netlify all map
+// "./x.js" back to "./x.ts", so this stays portable everywhere.
+import { resolveInnertube, type InnertubeResult } from "../innertube/resolve.js";
+import { searchInnertube, type InnertubeSearchResult } from "../innertube/search.js";
 
 const JSON_HEADERS = {
   "content-type": "application/json",

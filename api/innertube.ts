@@ -31,7 +31,7 @@ export default async function handler(req: VercelReq, res: VercelRes): Promise<v
     const request = new Request(new URL(req.url ?? "/", `http://${host}`), {
       method: req.method ?? "GET",
     });
-    const { default: innertubeHandler } = await import("../netlify/functions/innertube");
+    const { default: innertubeHandler } = await import("../netlify/functions/innertube.js");
     const response = await innertubeHandler(request);
     res.status(response.status);
     response.headers.forEach((value, name) => res.setHeader(name, value));

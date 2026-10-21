@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../netlify/functions/innertube", () => ({ default: vi.fn() }));
+vi.mock("./innertube", () => ({ default: vi.fn() }));
 
-import handler from "./innertube";
-import innertubeHandler from "../netlify/functions/innertube";
+import handler from "../../api/innertube";
+import innertubeHandler from "./innertube";
 
 const dispatcher = vi.mocked(innertubeHandler);
 
@@ -36,7 +36,13 @@ function mockRes(): MockRes {
 }
 
 describe("Vercel function · /api/innertube adapter", () => {
-  beforeEach(() => dispatcher.mockReset());
+  // NOTE: must be a block body — `() => mockReset()` would return the mock
+// (chainable), which vitest 5 then invokes as a cleanup "function" during the
+// afterEach-cleanup pass, re-running a throwing mock implementation outside
+// the test body and failing the test.
+beforeEach(() => {
+  dispatcher.mockReset();
+});
 
   it("forwards the incoming URL (path + query) to the shared dispatcher", async () => {
     dispatcher.mockResolvedValue(
@@ -79,5 +85,18 @@ describe("Vercel function · /api/innertube adapter", () => {
     dispatcher.mockResolvedValue(new Response("{}", { status: 200 }));
     await handler({ url: "/api/innertube?id=x", method: undefined, headers: { host: "h" } }, mockRes());
     expect((dispatcher.mock.calls[0][0] as Request).method).toBe("GET");
+  });
+
+  it("serializes dispatcher crashes as JSON 500 instead of throwing", async () => {
+    dispatcher.mockImplementation(() => {
+      throw new TypeError("Request is not defined");
+    });
+    const res = mockRes();
+    await handler({ url: "/api/innertube?kind=search&q=x", headers: {} }, res);
+    expect(res.statusCode).toBe(500);
+    expect(res.headers["content-type"]).toContain("application/json");
+    const body = JSON.parse(res.body!.toString());
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("Request is not defined");
   });
 });

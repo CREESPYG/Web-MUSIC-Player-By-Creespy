@@ -23,3 +23,6 @@ Thumbs.db
 
 # temp
 *.tmp
+
+# local-only ad-hoc scripts (superseded by the vitest suites; not deployed)
+scratch/

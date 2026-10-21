@@ -9,6 +9,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
  * Alternative to true windowed virtualization — keeps existing Flexbox layout,
  * but still bounds DOM work so a 2000-track playlist scrolls smoothly.
  */
+/**
+ * Window policy for the incremental list — MUST never shrink the rendered
+ * window when the list merely grows (queue/playlist appends). The previous
+ * reset (`Math.min(initial, len)` on every new array identity) yanked deep
+ * lists back to 250 rows on EVERY add, deleting rendered rows, clamping the
+ * scroll position and making the queue visually "restart".
+ *
+ * - length 0        → 0
+ * - window below `initial` (fresh/short list) → grow to `min(initial, len)`
+ * - window above len (list shrank)            → clamp to len (no collapse past content)
+ * - otherwise                                  → keep the user's deep window as-is
+ */
+export function clampWindow(count: number, initial: number, length: number): number {
+  if (length <= 0) return 0;
+  return Math.min(Math.max(count, Math.min(initial, length)), length);
+}
+
 export function useIncrementalList<T, C extends HTMLElement = HTMLDivElement, S extends HTMLElement = HTMLDivElement>(
   items: T[],
   { step = 150, initial = 250, buffer = 800 }: { step?: number; initial?: number; buffer?: number } = {}
@@ -21,9 +38,9 @@ export function useIncrementalList<T, C extends HTMLElement = HTMLDivElement, S 
   const countRef = useRef(count);
   countRef.current = count;
 
-  // Reset the window whenever the item array is replaced (new playlist / new queue).
+  // Keep the window stable across appends; clamp only when the list shrinks.
   useEffect(() => {
-    setCount(Math.min(initial, items.length));
+    setCount((c) => clampWindow(c, initial, items.length));
   }, [items, initial]);
 
   // Append chunks while the sentinel sits inside the (nested) scroll container.

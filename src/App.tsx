@@ -588,6 +588,8 @@ export default function App() {
   }, []);
 
   const applyPlayback = useCallback((pb: PlaybackState) => {
+    // If remote has no valid song, NEVER pause or interfere with local music!
+    if (!pb || !pb.videoId || !pb.videoId.trim()) return;
     setTracks((prev) => {
       if (prev.some((t) => t.videoId === pb.videoId)) return prev;
       const t = makeTrack(pb.videoId, pb.title || "Room track", pb.artist || "Host", "Room · shared", "similar");
@@ -656,7 +658,7 @@ export default function App() {
   // When the host receives a broadcast from a permitted member, this applies
   // it to the host's player so the host relays the correct state via heartbeat.
   useEffect(() => {
-    if (!roomTarget) return;
+    if (!roomTarget || !roomTarget.videoId) return;
     const list = tracksRef.current;
     const idx = list.findIndex((t) => t.videoId === roomTarget.videoId);
     if (idx === -1) return;
@@ -665,16 +667,20 @@ export default function App() {
     const expected = roomTarget.position + (roomTarget.isPlaying ? (Date.now() - roomTarget.ts) / 1000 : 0);
     const isHostRelay = room.isOwner;
     if (idx !== p.index) {
-      isRemoteUpdate.current = true;
-      p.cue(idx, roomTarget.isPlaying);
-      window.setTimeout(() => {
-        playerRef.current?.seek(Math.max(0, expected));
-        isRemoteUpdate.current = false;
-        if (isHostRelay) room.pushPlayback();
-      }, 550);
+      if (roomTarget.isPlaying) {
+        isRemoteUpdate.current = true;
+        p.cue(idx, true);
+        window.setTimeout(() => {
+          playerRef.current?.seek(Math.max(0, expected));
+          isRemoteUpdate.current = false;
+          if (isHostRelay) room.pushPlayback();
+        }, 550);
+      }
     } else {
       if (Math.abs(p.time - expected) > 1.5) p.seek(Math.max(0, expected));
-      if (roomTarget.isPlaying !== p.playing) {
+      // ONLY sync play if remote is explicitly playing.
+      // Never auto-pause user's existing music when joining a room.
+      if (roomTarget.isPlaying && !p.playing) {
         isRemoteUpdate.current = true;
         p.toggle();
         window.setTimeout(() => {
@@ -740,18 +746,6 @@ export default function App() {
     }
   }, [room.inRoom, room.canDrive, room.pushPlayback]);
 
-  // Invite link & refresh: useRoom auto-joins or restores the room — land on the FULL Rooms screen
-  useEffect(() => {
-    const invite = readInviteCode();
-    if (invite) {
-      setRoomOpen(false);
-      changeScreen("rooms");
-      requestMobileTab("room");
-    } else if (screen === "rooms") {
-      requestMobileTab("room");
-    }
-  }, [screen, changeScreen]);
-
   const controlsLocked = room.inRoom && !room.canDrive;
   // Host should never have their own controls restricted by room permissions
   const effectiveRoomPerms = room.inRoom && !room.isHost ? room.permissions : undefined;
@@ -809,6 +803,18 @@ export default function App() {
     },
     [view, changeView]
   );
+
+  // Invite link & refresh: useRoom auto-joins or restores the room — land on the FULL Rooms screen
+  useEffect(() => {
+    const invite = readInviteCode();
+    if (invite) {
+      setRoomOpen(false);
+      changeScreen("rooms");
+      requestMobileTab("room");
+    } else if (screen === "rooms") {
+      requestMobileTab("room");
+    }
+  }, [screen, changeScreen]);
 
   /* Shared play/queue handlers for screen-level UI (search, library, history) */
   const uiPlayTrack = (t: Track, opts?: { goHome?: boolean }) => {

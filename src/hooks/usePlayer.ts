@@ -176,6 +176,8 @@ export function usePlayer(
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
   const switchingRef = useRef(false); // suppresses pause-state flaps during src swaps
+  const userWantsPlayRef = useRef(false);
+  const prefetchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     shuffleRef.current = shuffleMode;
@@ -285,6 +287,10 @@ export function usePlayer(
                 updateMediaSession(tracksRef.current[idxRef.current], true);
               } else if (e.data === YTState.PAUSED) {
                 if (switchingRef.current) return;
+                if (userWantsPlayRef.current) {
+                  try { pRef.current?.playVideo?.(); } catch { /* noop */ }
+                  return;
+                }
                 playingRef.current = false;
                 setPlaying(false);
                 setBuffering(false);
@@ -395,6 +401,7 @@ export function usePlayer(
     pauseBoth();
 
     if (autoplay) {
+      userWantsPlayRef.current = true;
       startedRef.current = true;
       playingRef.current = true;
       setPlaying(true);
@@ -404,6 +411,7 @@ export function usePlayer(
         /* history is best-effort; never block playback */
       }
     } else {
+      userWantsPlayRef.current = false;
       playingRef.current = false;
       setPlaying(false);
     }
@@ -554,6 +562,11 @@ export function usePlayer(
       });
       onAudio("pause", () => {
         if (engineRef.current !== "stream" || switchingRef.current || a?.ended) return;
+        // Guarantee: No auto-pause unless explicit pause action was taken by user!
+        if (userWantsPlayRef.current) {
+          a?.play().catch(() => {});
+          return;
+        }
         playingRef.current = false;
         setPlaying(false);
         setBuffering(false);
@@ -562,6 +575,21 @@ export function usePlayer(
       });
       onAudio("waiting", () => {
         if (engineRef.current === "stream" && a && !a.paused) setBuffering(true);
+      });
+      onAudio("canplay", () => {
+        if (engineRef.current === "stream" && userWantsPlayRef.current && a && a.paused) {
+          a.play().catch(() => {});
+        }
+      });
+      onAudio("timeupdate", () => {
+        if (engineRef.current !== "stream" || !a) return;
+        const nextTr = tracksRef.current[idxRef.current + 1];
+        if (nextTr?.videoId && a.duration && a.currentTime > a.duration * 0.4) {
+          if (!prefetchedRef.current.has(nextTr.videoId)) {
+            prefetchedRef.current.add(nextTr.videoId);
+            resolveAudioStream(nextTr.videoId).catch(() => {});
+          }
+        }
       });
       onAudio("seeked", () => {
         if (engineRef.current === "stream" && a) setTime(a.currentTime || 0);
@@ -801,12 +829,19 @@ export function usePlayer(
       return;
     }
     try {
-      if (playingRef.current) {
+      if (playingRef.current || userWantsPlayRef.current) {
+        userWantsPlayRef.current = false;
         engPause();
+        playingRef.current = false;
+        setPlaying(false);
+        releaseWakeLock();
       } else {
+        userWantsPlayRef.current = true;
         startedRef.current = true;
         setAutoStopped(false);
         engPlay();
+        playingRef.current = true;
+        setPlaying(true);
         requestWakeLock();
       }
     } catch {
@@ -816,6 +851,7 @@ export function usePlayer(
 
   /** Explicit play — one authoritative path (state syncs via engine events). */
   const play = useCallback(() => {
+    userWantsPlayRef.current = true;
     const list = tracksRef.current;
     if (!startedRef.current && list.length && list[idxRef.current]) {
       cue(idxRef.current, true);
@@ -829,6 +865,7 @@ export function usePlayer(
 
   /** Explicit pause — one authoritative path (state syncs via engine events). */
   const pause = useCallback(() => {
+    userWantsPlayRef.current = false;
     engPause();
   }, [engPause]);
 
